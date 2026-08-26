@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onMounted, provide, ref } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useCalendarApp } from './composables/useCalendarApp'
 import SetupModal from './components/SetupModal.vue'
 import LeftDashboard from './components/LeftDashboard.vue'
 import WeeklySchedule from './components/WeeklySchedule.vue'
+
+const POLL_MS = 60_000
 
 const app = useCalendarApp()
 provide('calendarApp', app)
@@ -11,6 +13,27 @@ provide('calendarApp', app)
 const bootError = ref('')
 const booting = ref(!!app.config.value)
 const refreshing = ref(false)
+const softRefreshing = ref(false)
+const nextPollAt = ref(0)
+const nowTick = ref(Date.now())
+const pageVisible = ref(
+  typeof document === 'undefined' ? true : document.visibilityState === 'visible'
+)
+
+let countdownTimer = null
+
+const secondsToPoll = computed(() => {
+  if (!app.config.value || !nextPollAt.value || !pageVisible.value) return null
+  const sec = Math.ceil((nextPollAt.value - nowTick.value) / 1000)
+  return Math.max(0, sec)
+})
+
+const countdownText = computed(() => {
+  if (softRefreshing.value) return '背景更新中…'
+  if (secondsToPoll.value == null) return ''
+  if (secondsToPoll.value <= 0) return '即將更新…'
+  return `${secondsToPoll.value} 秒後更新`
+})
 
 onMounted(async () => {
   if (!app.config.value) {
@@ -25,14 +48,95 @@ onMounted(async () => {
   } finally {
     booting.value = false
   }
+  startPolling()
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
+onUnmounted(() => {
+  stopPolling()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
+
+watch(
+  () => app.config.value,
+  (cfg) => {
+    if (cfg) startPolling()
+    else stopPolling()
+  }
+)
+
 const showSetup = computed(() => !app.config.value && !booting.value)
+
+function scheduleNextPoll(from = Date.now()) {
+  nextPollAt.value = from + POLL_MS
+  nowTick.value = Date.now()
+}
+
+function startCountdownTick() {
+  if (countdownTimer != null) return
+  countdownTimer = window.setInterval(() => {
+    nowTick.value = Date.now()
+    if (
+      app.config.value &&
+      document.visibilityState === 'visible' &&
+      nextPollAt.value &&
+      Date.now() >= nextPollAt.value &&
+      !softRefreshing.value &&
+      !refreshing.value
+    ) {
+      softPoll()
+    }
+  }, 250)
+}
+
+function startPolling() {
+  stopPolling()
+  if (!app.config.value) return
+  scheduleNextPoll()
+  startCountdownTick()
+}
+
+function stopPolling() {
+  if (countdownTimer != null) {
+    clearInterval(countdownTimer)
+    countdownTimer = null
+  }
+  nextPollAt.value = 0
+}
+
+function onVisibilityChange() {
+  pageVisible.value = document.visibilityState === 'visible'
+  nowTick.value = Date.now()
+  if (pageVisible.value && app.config.value) {
+    softPoll()
+  }
+}
+
+/** 背景軟更新：只重抓資料 */
+async function softPoll() {
+  if (!app.config.value) return
+  if (document.visibilityState === 'hidden') return
+  if (refreshing.value || softRefreshing.value || app.saving.value || app.loading.value) {
+    // 忙碌中：稍後再試，避免卡住倒數
+    scheduleNextPoll(Date.now() + 5_000)
+    return
+  }
+  softRefreshing.value = true
+  try {
+    await app.reloadData({ silent: true })
+  } catch {
+    // 背景失敗不打斷操作，下次再試
+  } finally {
+    softRefreshing.value = false
+    scheduleNextPoll()
+  }
+}
 
 async function handleLogin(form) {
   bootError.value = ''
   try {
     await app.login(form)
+    startPolling()
   } catch (err) {
     bootError.value = err.message || String(err)
   }
@@ -40,11 +144,12 @@ async function handleLogin(form) {
 
 function handleLogout() {
   if (confirm('確定要登出嗎？')) {
+    stopPolling()
     app.logout()
   }
 }
 
-/** 清除瀏覽器／PWA 暫存後重新載入，保留登入設定 */
+/** 原本模式：清暫存 + 整頁重載，保留登入 */
 async function handleRefresh() {
   if (refreshing.value) return
   refreshing.value = true
@@ -71,16 +176,21 @@ async function handleRefresh() {
       class="sticky top-0 z-40 border-b border-line/80 bg-white/90 backdrop-blur"
     >
       <div class="mx-auto flex max-w-[1600px] items-center justify-between gap-3 px-4 py-3">
-        <div class="shrink-0">
+        <div class="min-w-0 shrink">
           <h1 class="text-lg font-bold tracking-tight text-ink md:text-xl">
             Karen Calendar
             <span class="ml-2 text-sm font-medium text-brand">高效管理</span>
           </h1>
           <p class="text-xs text-mute">
             <span v-if="app.saving.value" class="text-brand">同步中…</span>
+            <span v-else-if="refreshing" class="text-brand">讀取中…</span>
             <span v-else-if="app.syncOk.value" class="text-status-done">{{ app.syncOk.value }}</span>
             <span v-else-if="app.syncError.value" class="text-status-todo">同步失敗</span>
             <span v-else>就緒</span>
+            <span
+              v-if="app.config.value && countdownText"
+              class="ml-2 text-brand"
+            >· {{ countdownText }}</span>
           </p>
         </div>
 

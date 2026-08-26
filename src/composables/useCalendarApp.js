@@ -129,6 +129,37 @@ export function useCalendarApp() {
     await login(config.value)
   }
 
+  /** 只重抓 GitHub 資料，不登出、不整頁刷新 */
+  async function reloadData(options = {}) {
+    const silent = options.silent === true
+    if (!client.value) {
+      throw new Error('尚未登入')
+    }
+    if (saving.value) return
+    syncError.value = ''
+    if (silent) {
+      // 背景更新：只在有 debounce 待寫入時才先送出，避免每 60 秒空 commit
+      scheduleSave.flush('Auto sync before refresh')
+      await saveQueue
+    } else {
+      await persistNow('Sync before refresh')
+    }
+    const data = await client.value.load()
+    store.version = data.version || 1
+    store.tasks = Array.isArray(data.tasks) ? data.tasks : []
+    store.keyPlans = (Array.isArray(data.keyPlans) ? data.keyPlans : []).filter(
+      (p) => String(p.title || '').trim()
+    )
+    store.reviews =
+      data.reviews && typeof data.reviews === 'object' ? { ...data.reviews } : {}
+    if (!silent) {
+      syncOk.value = `已重新讀取 ${new Date().toLocaleTimeString()}`
+      setTimeout(() => {
+        syncOk.value = ''
+      }, 2500)
+    }
+  }
+
   function tasksOn(dateKey) {
     return store.tasks.filter((t) => t.date === dateKey)
   }
@@ -266,6 +297,7 @@ export function useCalendarApp() {
     login,
     logout,
     bootstrap,
+    reloadData,
     tasksOn,
     taskAt,
     upsertTask,

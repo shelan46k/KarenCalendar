@@ -199,13 +199,22 @@ export function debounce(fn, wait = 1500) {
   let timer = null
   const debounced = (...args) => {
     clearTimeout(timer)
-    timer = setTimeout(() => fn(...args), wait)
+    timer = setTimeout(() => {
+      timer = null
+      fn(...args)
+    }, wait)
   }
   debounced.flush = (...args) => {
+    if (timer == null) return
     clearTimeout(timer)
+    timer = null
     fn(...args)
   }
-  debounced.cancel = () => clearTimeout(timer)
+  debounced.cancel = () => {
+    clearTimeout(timer)
+    timer = null
+  }
+  debounced.pending = () => timer != null
   return debounced
 }
 

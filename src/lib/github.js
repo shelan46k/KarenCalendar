@@ -27,7 +27,8 @@ export class GitHubDataClient {
   async validate() {
     const { owner, repo } = this.config
     const res = await fetch(`${API}/repos/${owner}/${repo}`, {
-      headers: this.headers()
+      headers: this.headers(),
+      cache: 'no-store'
     })
     if (res.status === 401) {
       throw new Error('驗證失敗，請確認 Token 是否正確。')
@@ -42,7 +43,10 @@ export class GitHubDataClient {
   }
 
   async load() {
-    const res = await fetch(this.contentUrl(), { headers: this.headers() })
+    const res = await fetch(this.contentUrl(), {
+      headers: this.headers(),
+      cache: 'no-store'
+    })
 
     if (res.status === 404) {
       // 檔案尚不存在：建立空白資料庫
