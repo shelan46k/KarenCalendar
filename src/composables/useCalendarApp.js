@@ -48,6 +48,13 @@ export function useCalendarApp() {
   })
   const todayStats = computed(() => countByStatus(todayTasks.value))
   const monthStats = computed(() => countByStatus(monthItems.value))
+  /** 今日完成率：僅當日時程任務（與本月相同公式） */
+  const todayRate = computed(() => {
+    const items = todayTasks.value
+    if (!items.length) return 0
+    const done = items.filter((t) => t.status === STATUS.done).length
+    return (done / items.length) * 100
+  })
   const monthRate = computed(() => {
     const items = monthItems.value
     if (!items.length) return 0
@@ -164,24 +171,32 @@ export function useCalendarApp() {
     return store.tasks.filter((t) => t.date === dateKey)
   }
 
-  function taskAt(dateKey, timeSlot) {
-    return store.tasks.find((t) => t.date === dateKey && t.timeSlot === timeSlot) || null
+  function tasksAt(dateKey, timeSlot) {
+    return store.tasks.filter((t) => t.date === dateKey && t.timeSlot === timeSlot)
   }
 
-  function upsertTask({ date, timeSlot, title, status }) {
-    const existing = taskAt(date, timeSlot)
-    if (existing) {
-      existing.title = title
-      if (status) existing.status = status
-    } else {
-      store.tasks.push({
-        id: createId(),
-        title,
-        date,
-        timeSlot,
-        status: status || STATUS.todo
-      })
+  function taskAt(dateKey, timeSlot) {
+    return tasksAt(dateKey, timeSlot)[0] || null
+  }
+
+  function upsertTask({ id, date, timeSlot, title, status }) {
+    if (id) {
+      const existing = store.tasks.find((t) => t.id === id)
+      if (existing) {
+        existing.title = title
+        existing.date = date
+        existing.timeSlot = timeSlot
+        if (status) existing.status = status
+        return
+      }
     }
+    store.tasks.push({
+      id: createId(),
+      title,
+      date,
+      timeSlot,
+      status: status || STATUS.todo
+    })
   }
 
   function removeTask(id) {
@@ -205,19 +220,8 @@ export function useCalendarApp() {
   function moveTask(id, date, timeSlot) {
     const task = store.tasks.find((t) => t.id === id)
     if (!task) return
-    const conflict = taskAt(date, timeSlot)
-    if (conflict && conflict.id !== id) {
-      // 交換位置
-      const oldDate = task.date
-      const oldSlot = task.timeSlot
-      task.date = date
-      task.timeSlot = timeSlot
-      conflict.date = oldDate
-      conflict.timeSlot = oldSlot
-    } else {
-      task.date = date
-      task.timeSlot = timeSlot
-    }
+    task.date = date
+    task.timeSlot = timeSlot
     persistNow(`Move task: ${task.title || task.id}`)
   }
 
@@ -290,6 +294,7 @@ export function useCalendarApp() {
     monthKey,
     selectedKey,
     todayStats,
+    todayRate,
     monthStats,
     monthRate,
     keyPlans,
@@ -299,6 +304,7 @@ export function useCalendarApp() {
     bootstrap,
     reloadData,
     tasksOn,
+    tasksAt,
     taskAt,
     upsertTask,
     removeTask,

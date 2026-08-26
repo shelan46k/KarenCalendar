@@ -1,6 +1,6 @@
 <script setup>
 import { computed, inject, nextTick, reactive, ref, watch } from 'vue'
-import { completionRate, formatRate, STATUS, toDateKey } from '../lib/utils'
+import { formatRate, STATUS } from '../lib/utils'
 import AgendaList from './AgendaList.vue'
 import CollapsibleSection from './CollapsibleSection.vue'
 import DonutChart from './DonutChart.vue'
@@ -21,15 +21,9 @@ const planForm = reactive({
 })
 const titleInput = ref(null)
 
-const todayRateText = computed(() =>
-  formatRate(
-    completionRate(app.store.tasks.filter((t) => t.date === toDateKey(new Date())))
-  )
-)
-
 const todaySummary = computed(() => {
   const s = app.todayStats.value
-  return `完成 ${s.done}/${s.total} · 完成率 ${todayRateText.value}`
+  return `完成 ${s.done}/${s.total} · 完成率 ${formatRate(app.todayRate.value)}`
 })
 
 const monthSummary = computed(() => {
@@ -135,16 +129,17 @@ function onReflectionsInput(e) {
 
     <CollapsibleSection id="today-stats" title="今日計劃情況" icon="today" :default-open="true">
       <template #summary>{{ todaySummary }}</template>
-      <StatList
-        :done="app.todayStats.value.done"
-        :in-progress="app.todayStats.value.in_progress"
-        :todo="app.todayStats.value.todo"
-        :total="app.todayStats.value.total"
-        show-ratio
-      />
-      <p class="mt-2 text-right text-xs text-mute">
-        今日完成率 {{ todayRateText }}
-      </p>
+      <div class="flex items-center gap-3">
+        <div class="flex-1">
+          <StatList
+            :done="app.todayStats.value.done"
+            :in-progress="app.todayStats.value.in_progress"
+            :todo="app.todayStats.value.todo"
+            :total="app.todayStats.value.total"
+          />
+        </div>
+        <DonutChart :rate="app.todayRate.value" label="今日完成率" />
+      </div>
     </CollapsibleSection>
 
     <CollapsibleSection id="month-stats" title="本月計劃情況" icon="chart" :default-open="true">

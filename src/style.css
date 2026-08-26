@@ -46,11 +46,11 @@ body {
 }
 
 .grid-cell {
-  @apply relative h-9 min-h-0 border border-line bg-white transition hover:bg-slate-50;
+  @apply relative flex min-h-9 flex-col justify-center border border-line bg-white transition hover:bg-slate-50;
 }
 
 .task-chip {
-  @apply absolute inset-y-0 inset-x-0.5 z-10 flex cursor-grab items-center rounded-sm border border-slate-200 bg-white text-[13px] leading-none shadow-sm active:cursor-grabbing;
+  @apply relative z-10 flex h-8 cursor-grab items-center rounded-sm border border-slate-200 bg-white text-[13px] leading-none shadow-sm active:cursor-grabbing;
 }
 
 .task-chip > span {

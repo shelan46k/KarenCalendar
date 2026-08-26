@@ -17,7 +17,8 @@ import StatusIcon from './StatusIcon.vue'
 const app = inject('calendarApp')
 
 const days = computed(() => weekDates(app.weekAnchor.value))
-const editing = ref(null) // { date, timeSlot, title, status, id? }
+/** null | { mode: 'picker', date, timeSlot } | { mode: 'form', date, timeSlot, title, status, id? } */
+const dialog = ref(null)
 const titleInput = ref(null)
 
 function prevWeek() {
@@ -40,42 +41,82 @@ function dayRate(date) {
   return completionRate(app.tasksOn(key))
 }
 
+function cellTasks(day, slot) {
+  return app.tasksAt(toDateKey(day), slot)
+}
+
 function openCell(date, timeSlot) {
   const key = toDateKey(date)
-  const existing = app.taskAt(key, timeSlot)
-  editing.value = {
-    date: key,
+  const list = app.tasksAt(key, timeSlot)
+  if (!list.length) {
+    openAddForm(key, timeSlot)
+    return
+  }
+  dialog.value = { mode: 'picker', date: key, timeSlot }
+}
+
+function openAddForm(date, timeSlot) {
+  dialog.value = {
+    mode: 'form',
+    date,
     timeSlot,
-    title: existing?.title || '',
-    status: existing?.status || STATUS.todo,
-    id: existing?.id || null
+    title: '',
+    status: STATUS.todo,
+    id: null
   }
   nextTick(() => titleInput.value?.focus())
 }
 
+function openEditForm(task) {
+  dialog.value = {
+    mode: 'form',
+    date: task.date,
+    timeSlot: task.timeSlot,
+    title: task.title || '',
+    status: task.status || STATUS.todo,
+    id: task.id
+  }
+  nextTick(() => titleInput.value?.focus())
+}
+
+function pickerTasks() {
+  if (!dialog.value || dialog.value.mode !== 'picker') return []
+  return app.tasksAt(dialog.value.date, dialog.value.timeSlot)
+}
+
+function closeDialog() {
+  dialog.value = null
+}
+
 function saveEdit() {
-  if (!editing.value) return
-  const { date, timeSlot, title, status, id } = editing.value
+  if (!dialog.value || dialog.value.mode !== 'form') return
+  const { date, timeSlot, title, status, id } = dialog.value
   if (!title.trim()) {
     if (id) {
       app.removeTask(id)
       app.persistNow('Delete empty task')
     }
   } else {
-    app.upsertTask({ date, timeSlot, title: title.trim(), status })
+    app.upsertTask({
+      id: id || undefined,
+      date,
+      timeSlot,
+      title: title.trim(),
+      status
+    })
     app.persistNow(`Upsert task: ${title.trim()}`)
   }
-  editing.value = null
+  closeDialog()
 }
 
 function deleteEdit() {
-  if (!editing.value?.id) {
-    editing.value = null
+  if (!dialog.value?.id) {
+    closeDialog()
     return
   }
-  app.removeTask(editing.value.id)
+  app.removeTask(dialog.value.id)
   app.persistNow('Delete task')
-  editing.value = null
+  closeDialog()
 }
 
 function onDragStart(event, task) {
@@ -103,15 +144,8 @@ watch(
       app.clearFocusTask()
       return
     }
-    editing.value = {
-      date: task.date,
-      timeSlot: task.timeSlot,
-      title: task.title || '',
-      status: task.status || STATUS.todo,
-      id: task.id
-    }
+    openEditForm(task)
     nextTick(() => {
-      titleInput.value?.focus()
       app.clearFocusTask()
     })
   }
@@ -152,7 +186,6 @@ watch(
 
     <div class="min-h-0 flex-1 overflow-auto">
       <div class="min-w-[720px]">
-        <!-- 表頭：日期與完成率 -->
         <div
           class="sticky top-0 z-20 grid border-b border-line bg-panel"
           style="grid-template-columns: 64px repeat(7, minmax(0, 1fr))"
@@ -181,7 +214,6 @@ watch(
           </div>
         </div>
 
-        <!-- 時段格子 -->
         <div
           v-for="slot in TIME_SLOTS"
           :key="slot"
@@ -189,7 +221,7 @@ watch(
           style="grid-template-columns: 64px repeat(7, minmax(0, 1fr))"
         >
           <div
-            class="sticky left-0 z-10 flex h-9 items-center justify-center border-b border-r border-line bg-soft px-1 text-[11px] leading-none text-mute shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
+            class="sticky left-0 z-10 flex min-h-9 items-center justify-center border-b border-r border-line bg-soft px-1 text-[11px] leading-none text-mute shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
           >
             {{ Number(slot.slice(0, 2)) }}:00
           </div>
@@ -202,40 +234,94 @@ watch(
             @drop="onDrop($event, day, slot)"
           >
             <div
-              v-if="app.taskAt(toDateKey(day), slot)"
-              class="task-chip"
-              draggable="true"
-              :title="app.taskAt(toDateKey(day), slot).title"
-              @dragstart="onDragStart($event, app.taskAt(toDateKey(day), slot))"
-              @click.stop="openCell(day, slot)"
+              v-if="cellTasks(day, slot).length"
+              class="flex w-full flex-col gap-0.5 p-0.5"
             >
-              <span class="truncate">{{ app.taskAt(toDateKey(day), slot).title }}</span>
-              <StatusIcon
-                :status="app.taskAt(toDateKey(day), slot).status"
-                size="sm"
-                @click="app.cycleTaskStatus(app.taskAt(toDateKey(day), slot).id)"
-              />
+              <div
+                v-for="task in cellTasks(day, slot)"
+                :key="task.id"
+                class="task-chip relative"
+                draggable="true"
+                :title="task.title"
+                @dragstart="onDragStart($event, task)"
+                @click.stop="openCell(day, slot)"
+              >
+                <span class="truncate">{{ task.title }}</span>
+                <StatusIcon
+                  :status="task.status"
+                  size="sm"
+                  @click="app.cycleTaskStatus(task.id)"
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 編輯彈窗 -->
+    <!-- 有計劃時：選新增或編輯 -->
     <div
-      v-if="editing"
+      v-if="dialog?.mode === 'picker'"
       class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
-      @click.self="editing = null"
+      @click.self="closeDialog"
+    >
+      <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-soft">
+        <div class="border-b border-line px-4 py-3">
+          <h3 class="text-base font-bold">選擇操作</h3>
+          <p class="mt-1 text-xs text-mute">{{ dialog.date }} · {{ dialog.timeSlot }}</p>
+        </div>
+
+        <button
+          type="button"
+          class="block w-full border-b border-line px-4 py-3 text-left text-sm font-medium text-brand hover:bg-brand-soft/40"
+          @click="openAddForm(dialog.date, dialog.timeSlot)"
+        >
+          ＋ 新增計劃
+        </button>
+
+        <p class="px-4 pt-3 text-xs font-semibold text-mute">編輯既有計劃</p>
+        <div class="max-h-64 overflow-y-auto py-1">
+          <button
+            v-for="task in pickerTasks()"
+            :key="task.id"
+            type="button"
+            class="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-soft"
+            :title="task.title"
+            @click="openEditForm(task)"
+          >
+            <StatusIcon :status="task.status" size="sm" />
+            <span
+              class="min-w-0 flex-1 truncate text-sm"
+              :class="task.status === 'done' ? 'text-slate-400 line-through' : 'text-ink'"
+            >{{ task.title || '（未命名）' }}</span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          class="block w-full border-t border-line px-4 py-3 text-left text-sm text-mute hover:bg-soft"
+          @click="closeDialog"
+        >
+          取消
+        </button>
+      </div>
+    </div>
+
+    <!-- 新增 / 編輯表單 -->
+    <div
+      v-if="dialog?.mode === 'form'"
+      class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+      @click.self="closeDialog"
     >
       <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-soft">
-        <h3 class="text-base font-bold">編輯任務</h3>
-        <p class="mt-1 text-xs text-mute">{{ editing.date }} · {{ editing.timeSlot }}</p>
+        <h3 class="text-base font-bold">{{ dialog.id ? '編輯任務' : '新增任務' }}</h3>
+        <p class="mt-1 text-xs text-mute">{{ dialog.date }} · {{ dialog.timeSlot }}</p>
 
         <label class="mt-4 block">
           <span class="mb-1 block text-sm font-medium">任務名稱</span>
           <input
             ref="titleInput"
-            v-model="editing.title"
+            v-model="dialog.title"
             type="text"
             class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
             placeholder="例如：處理郵件"
@@ -245,14 +331,14 @@ watch(
 
         <div class="mt-4">
           <p class="mb-2 text-sm font-medium">狀態</p>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <button
               v-for="s in ['todo', 'in_progress', 'done']"
               :key="s"
               type="button"
               class="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"
-              :class="editing.status === s ? 'border-brand bg-brand-soft' : 'border-line'"
-              @click="editing.status = s"
+              :class="dialog.status === s ? 'border-brand bg-brand-soft' : 'border-line'"
+              @click="dialog.status = s"
             >
               <StatusIcon :status="s" />
               {{ s === 'done' ? '已完成' : s === 'in_progress' ? '進行中' : '未開始' }}
@@ -262,17 +348,19 @@ watch(
 
         <div class="mt-5 flex flex-wrap justify-between gap-2">
           <button
+            v-if="dialog.id"
             type="button"
             class="rounded-xl border border-red-200 px-3 py-2 text-sm text-status-todo hover:bg-red-50"
             @click="deleteEdit"
           >
             刪除
           </button>
+          <div v-else />
           <div class="flex gap-2">
             <button
               type="button"
               class="rounded-xl border border-line px-3 py-2 text-sm hover:bg-soft"
-              @click="editing = null"
+              @click="closeDialog"
             >
               取消
             </button>
