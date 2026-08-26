@@ -185,7 +185,7 @@ watch(
           style="grid-template-columns: 64px repeat(7, minmax(0, 1fr))"
         >
           <div
-            class="flex items-start justify-center border-b border-r border-line bg-soft/60 px-1 py-2 text-xs text-mute"
+            class="flex h-9 items-center justify-center border-b border-r border-line bg-soft/60 px-1 text-[11px] leading-none text-mute"
           >
             {{ Number(slot.slice(0, 2)) }}:00
           </div>
@@ -201,10 +201,11 @@ watch(
               v-if="app.taskAt(toDateKey(day), slot)"
               class="task-chip"
               draggable="true"
+              :title="app.taskAt(toDateKey(day), slot).title"
               @dragstart="onDragStart($event, app.taskAt(toDateKey(day), slot))"
               @click.stop="openCell(day, slot)"
             >
-              <span class="line-clamp-2 break-words">{{ app.taskAt(toDateKey(day), slot).title }}</span>
+              <span class="truncate">{{ app.taskAt(toDateKey(day), slot).title }}</span>
               <StatusIcon
                 :status="app.taskAt(toDateKey(day), slot).status"
                 size="sm"

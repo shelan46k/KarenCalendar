@@ -126,6 +126,7 @@ function chipClass(active) {
         <button
           type="button"
           class="min-w-0 flex-1 text-left"
+          :title="`${task.title || '（未命名）'} · ${displayDate(task.date)} · ${task.timeSlot}`"
           @click="onSelect(task)"
         >
           <p

@@ -168,6 +168,7 @@ function onReflectionsInput(e) {
           <button
             type="button"
             class="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-1 py-1.5 text-left transition hover:bg-soft"
+            :title="plan.title"
             @click="openPlanEdit(plan)"
           >
             <span
@@ -175,7 +176,7 @@ function onReflectionsInput(e) {
               :class="plan.status === 'done' ? 'text-slate-300' : 'text-mute'"
             >{{ index + 1 }}.</span>
             <span
-              class="min-w-0 flex-1 text-sm"
+              class="min-w-0 flex-1 truncate text-sm"
               :class="plan.status === 'done' ? 'text-slate-400 line-through' : 'text-ink'"
             >{{ plan.title }}</span>
           </button>
