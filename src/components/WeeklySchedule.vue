@@ -221,12 +221,6 @@ watch(
       </div>
     </div>
 
-    <div class="pointer-events-none absolute bottom-6 right-6 hidden select-none opacity-20 md:block">
-      <div class="rotate-[-12deg] rounded-full border-4 border-brand px-4 py-2 text-sm font-bold text-brand">
-        高效管理
-      </div>
-    </div>
-
     <!-- 編輯彈窗 -->
     <div
       v-if="editing"

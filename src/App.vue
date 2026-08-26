@@ -179,7 +179,6 @@ async function handleRefresh() {
         <div class="min-w-0 shrink">
           <h1 class="text-lg font-bold tracking-tight text-ink md:text-xl">
             Karen Calendar
-            <span class="ml-2 text-sm font-medium text-brand">高效管理</span>
           </h1>
           <p class="text-xs text-mute">
             <span v-if="app.saving.value" class="text-brand">同步中…</span>
