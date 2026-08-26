@@ -2,6 +2,8 @@
 import { computed, inject, ref } from 'vue'
 import {
   formatDisplayDate,
+  formatTimeRange,
+  isPlanTask,
   parseDateKey,
   selectBgStyle,
   STATUS,
@@ -20,7 +22,7 @@ const showDone = ref(false)
 const slotOrder = Object.fromEntries(TIME_SLOTS.map((s, i) => [s, i]))
 
 const filteredTasks = computed(() => {
-  let list = [...app.store.tasks]
+  let list = app.store.tasks.filter(isPlanTask)
 
   if (scope.value === 'month') {
     list = list.filter((t) => t.date.startsWith(app.monthKey.value))
@@ -72,7 +74,7 @@ function chipStyle(active) {
 </script>
 
 <template>
-  <CollapsibleSection id="agenda" title="全部行程" icon="list" :default-open="true">
+  <CollapsibleSection id="agenda" title="全部計劃" icon="list" :default-open="true">
     <template #summary>{{ summaryText }}</template>
 
     <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -136,18 +138,18 @@ function chipStyle(active) {
         <button
           type="button"
           class="min-w-0 flex-1 text-left"
-          :title="`${task.title || '（未命名）'} · ${displayDate(task.date)} · ${task.timeSlot}`"
+          :title="`${task.title || '（未命名）'} · ${displayDate(task.date)} · ${formatTimeRange(task)}`"
           @click="onSelect(task)"
         >
           <p class="truncate text-sm text-ink">
             {{ task.title || '（未命名）' }}
           </p>
           <p class="mt-0.5 text-[11px] text-mute">
-            {{ displayDate(task.date) }} · {{ task.timeSlot }}
+            {{ displayDate(task.date) }} · {{ formatTimeRange(task) }}
           </p>
         </button>
       </div>
     </div>
-    <p v-else class="text-sm text-mute">沒有符合的行程</p>
+    <p v-else class="text-sm text-mute">沒有符合的計劃</p>
   </CollapsibleSection>
 </template>

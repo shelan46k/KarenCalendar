@@ -2,6 +2,7 @@
 import { computed, inject } from 'vue'
 import {
   formatDisplayDate,
+  isPlanTask,
   monthMatrix,
   SELECT_COLOR,
   selectBgStyle,
@@ -48,7 +49,7 @@ const matrix = computed(() =>
 const incompleteDates = computed(() => {
   const set = new Set()
   for (const task of app.store.tasks) {
-    if (task.status !== STATUS.done) set.add(task.date)
+    if (isPlanTask(task) && task.status !== STATUS.done) set.add(task.date)
   }
   return set
 })

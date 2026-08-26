@@ -28,11 +28,20 @@ const secondsToPoll = computed(() => {
   return Math.max(0, sec)
 })
 
-const countdownText = computed(() => {
-  if (softRefreshing.value) return '背景更新中…'
+/** 0～100：越接近下次背景更新越高 */
+const pollProgress = computed(() => {
+  if (softRefreshing.value) return 100
+  if (!app.config.value || !nextPollAt.value || !pageVisible.value) return 0
+  const remain = Math.max(0, nextPollAt.value - nowTick.value)
+  const done = ((POLL_MS - remain) / POLL_MS) * 100
+  return Math.min(100, Math.max(0, done))
+})
+
+const pollLabel = computed(() => {
+  if (softRefreshing.value) return '背景更新中'
   if (secondsToPoll.value == null) return ''
-  if (secondsToPoll.value <= 0) return '即將更新…'
-  return `${secondsToPoll.value} 秒後更新`
+  if (secondsToPoll.value <= 0) return '即將更新'
+  return '自動更新'
 })
 
 onMounted(async () => {
@@ -186,31 +195,40 @@ async function handleRefresh() {
             <span v-else-if="app.syncOk.value" class="text-status-done">{{ app.syncOk.value }}</span>
             <span v-else-if="app.syncError.value" class="text-status-todo">同步失敗</span>
             <span v-else>就緒</span>
-            <span
-              v-if="app.config.value && countdownText"
-              class="ml-2 text-brand"
-            >· {{ countdownText }}</span>
           </p>
         </div>
 
-        <div class="flex shrink-0 items-center gap-2">
-          <button
-            v-if="app.config.value"
-            type="button"
-            class="rounded-xl border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-soft disabled:opacity-60"
-            :disabled="refreshing"
-            @click="handleRefresh"
+        <div class="flex shrink-0 flex-col items-end gap-1.5">
+          <div class="flex items-center gap-2">
+            <button
+              v-if="app.config.value"
+              type="button"
+              class="rounded-xl border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-soft disabled:opacity-60"
+              :disabled="refreshing"
+              @click="handleRefresh"
+            >
+              {{ refreshing ? '讀取中…' : '重新讀取' }}
+            </button>
+            <button
+              v-if="app.config.value"
+              type="button"
+              class="rounded-xl border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-soft"
+              @click="handleLogout"
+            >
+              登出
+            </button>
+          </div>
+          <div
+            v-if="app.config.value && pollLabel"
+            class="h-1 w-full min-w-[8.5rem] overflow-hidden rounded-full bg-brand-soft"
+            :title="pollLabel"
           >
-            {{ refreshing ? '讀取中…' : '重新讀取' }}
-          </button>
-          <button
-            v-if="app.config.value"
-            type="button"
-            class="rounded-xl border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-soft"
-            @click="handleLogout"
-          >
-            登出
-          </button>
+            <div
+              class="h-full rounded-full bg-accent transition-[width] duration-200 ease-linear"
+              :class="{ 'animate-pulse': softRefreshing }"
+              :style="{ width: `${pollProgress}%` }"
+            />
+          </div>
         </div>
       </div>
       <div
@@ -225,8 +243,8 @@ async function handleRefresh() {
       v-if="app.config.value && !booting"
       class="mx-auto grid max-w-[1600px] gap-4 p-3 md:p-4 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]"
     >
-      <LeftDashboard />
-      <WeeklySchedule />
+      <LeftDashboard class="order-2 lg:order-1" />
+      <WeeklySchedule class="order-1 lg:order-2" />
     </main>
 
     <div

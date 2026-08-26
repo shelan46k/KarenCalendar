@@ -1,4 +1,5 @@
 /** @typedef {'done' | 'in_progress' | 'todo'} TaskStatus */
+/** @typedef {'plan' | 'schedule'} TaskKind */
 
 export const STATUS = {
   done: 'done',
@@ -14,9 +15,120 @@ export const STATUS_META = {
   todo: { label: '未開始', icon: '✕', class: 'bg-status-todo', color: '#c96b6b' }
 }
 
+/** 每日格內項目：計劃（可追蹤狀態）／日程（純紀錄） */
+export const TASK_KIND = {
+  plan: 'plan',
+  schedule: 'schedule'
+}
+
+export const TASK_KIND_META = {
+  plan: { label: '計劃' },
+  schedule: { label: '日程' }
+}
+
+export function normalizeTaskKind(kind) {
+  return kind === TASK_KIND.schedule ? TASK_KIND.schedule : TASK_KIND.plan
+}
+
+export function isPlanTask(task) {
+  return normalizeTaskKind(task?.kind) === TASK_KIND.plan
+}
+
+/** 佔用幾個連續時段（至少 1） */
+export function taskDuration(task) {
+  const d = Number(task?.duration)
+  if (!Number.isFinite(d) || d < 1) return 1
+  return Math.min(Math.floor(d), TIME_SLOTS.length)
+}
+
+export function slotIndex(slot) {
+  return TIME_SLOTS.indexOf(slot)
+}
+
+export function clampDuration(startSlot, duration) {
+  const i = slotIndex(startSlot)
+  if (i < 0) return 1
+  const d = Number(duration)
+  const hours = Number.isFinite(d) && d >= 1 ? Math.floor(d) : 1
+  return Math.max(1, Math.min(hours, TIME_SLOTS.length - i))
+}
+
+export function maxDurationFrom(startSlot) {
+  const i = slotIndex(startSlot)
+  if (i < 0) return 1
+  return TIME_SLOTS.length - i
+}
+
+/** 結束時刻（最後一個佔用時段的下一整點） */
+export function taskEndLabel(task) {
+  const start = task?.timeSlot
+  const i = slotIndex(start)
+  if (i < 0) return start || ''
+  const d = clampDuration(start, taskDuration(task))
+  const endIdx = i + d
+  if (endIdx < TIME_SLOTS.length) return TIME_SLOTS[endIdx]
+  const last = TIME_SLOTS[TIME_SLOTS.length - 1]
+  const h = (Number(last.slice(0, 2)) + 1) % 24
+  return `${pad(h)}:00`
+}
+
+export function formatTimeRange(task) {
+  const start = task?.timeSlot || ''
+  const d = clampDuration(start, taskDuration(task))
+  if (d <= 1) return start
+  return `${start}–${taskEndLabel(task)}`
+}
+
+export function taskCoversSlot(task, dateKey, timeSlot) {
+  if (!task || task.date !== dateKey) return false
+  const i = slotIndex(task.timeSlot)
+  const j = slotIndex(timeSlot)
+  if (i < 0 || j < 0) return false
+  const d = clampDuration(task.timeSlot, taskDuration(task))
+  return j >= i && j < i + d
+}
+
+/**
+ * 同一天重疊項目並排分欄（Google 日曆風格）
+ * @returns {Map<string, { lane: number, lanes: number }>}
+ */
+export function layoutDayOverlaps(tasks) {
+  const items = tasks
+    .map((t) => {
+      const start = slotIndex(t.timeSlot)
+      if (start < 0) return null
+      const dur = clampDuration(t.timeSlot, taskDuration(t))
+      return { id: t.id, start, end: start + dur }
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start || b.end - a.end)
+
+  const laneEnds = []
+  const laneOf = new Map()
+
+  for (const item of items) {
+    let lane = laneEnds.findIndex((end) => end <= item.start)
+    if (lane < 0) {
+      lane = laneEnds.length
+      laneEnds.push(item.end)
+    } else {
+      laneEnds[lane] = item.end
+    }
+    laneOf.set(item.id, lane)
+  }
+
+  const result = new Map()
+  for (const item of items) {
+    const peers = items.filter((o) => o.start < item.end && o.end > item.start)
+    const maxLane = Math.max(...peers.map((o) => laneOf.get(o.id)))
+    result.set(item.id, { lane: laneOf.get(item.id), lanes: maxLane + 1 })
+  }
+  return result
+}
+
 /**
  * 選中高亮色（務必同步）：
- * 日曆選中日、全部行程篩選 chip、每日計劃「本週」、每日計劃進度條／百分比、圓環
+ * 日曆選中日、全部計劃篩選 chip、每日計劃「本週」、每日計劃進度條／百分比、圓環
  */
 export const SELECT_COLOR = '#BBAEE3'
 export const selectBgStyle = { backgroundColor: SELECT_COLOR }
@@ -130,6 +242,7 @@ export function emptyStore() {
   return {
     version: 1,
     tasks: [],
+    todos: [],
     keyPlans: [],
     reviews: {}
   }
@@ -140,22 +253,38 @@ export function normalizeStore(raw) {
   if (Array.isArray(raw)) {
     return {
       version: 1,
-      tasks: raw,
+      tasks: raw.map(normalizeTask),
+      todos: [],
       keyPlans: [],
       reviews: {}
     }
   }
   return {
     version: 1,
-    tasks: Array.isArray(raw?.tasks) ? raw.tasks : [],
+    tasks: (Array.isArray(raw?.tasks) ? raw.tasks : []).map(normalizeTask),
+    todos: Array.isArray(raw?.todos) ? raw.todos : [],
     keyPlans: Array.isArray(raw?.keyPlans) ? raw.keyPlans : [],
     reviews: raw?.reviews && typeof raw.reviews === 'object' ? raw.reviews : {}
+  }
+}
+
+export function normalizeTask(task) {
+  if (!task || typeof task !== 'object') return task
+  const kind = normalizeTaskKind(task.kind)
+  const timeSlot = task.timeSlot || TIME_SLOTS[0]
+  return {
+    ...task,
+    kind,
+    timeSlot,
+    duration: clampDuration(timeSlot, taskDuration(task)),
+    status: kind === TASK_KIND.schedule ? undefined : task.status || STATUS.todo
   }
 }
 
 export function countByStatus(tasks) {
   const base = { done: 0, in_progress: 0, todo: 0, total: 0 }
   for (const t of tasks) {
+    if (!isPlanTask(t)) continue
     base.total += 1
     if (t.status in base) base[t.status] += 1
   }
@@ -163,9 +292,10 @@ export function countByStatus(tasks) {
 }
 
 export function completionRate(tasks) {
-  if (!tasks.length) return 0
-  const done = tasks.filter((t) => t.status === STATUS.done).length
-  return (done / tasks.length) * 100
+  const plans = tasks.filter(isPlanTask)
+  if (!plans.length) return 0
+  const done = plans.filter((t) => t.status === STATUS.done).length
+  return (done / plans.length) * 100
 }
 
 export function formatRate(rate) {

@@ -1,4 +1,4 @@
-﻿# Karen Calendar
+# Karen Calendar
 
 個人計劃與週時程管理（SPA）。
 

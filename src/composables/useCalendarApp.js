@@ -2,16 +2,23 @@ import { computed, reactive, ref } from 'vue'
 import { GitHubDataClient } from '../lib/github'
 import {
   clearConfig,
+  clampDuration,
   countByStatus,
   createId,
   debounce,
   emptyStore,
   getReview,
+  isPlanTask,
   loadConfig,
   nextStatus,
+  normalizeStore,
+  normalizeTaskKind,
   parseDateKey,
   saveConfig,
   STATUS,
+  TASK_KIND,
+  taskCoversSlot,
+  taskDuration,
   toDateKey,
   toMonthKey
 } from '../lib/utils'
@@ -33,22 +40,24 @@ export function useCalendarApp() {
   const selectedKey = computed(() => toDateKey(selectedDate.value))
 
   const todayTasks = computed(() =>
-    store.tasks.filter((t) => t.date === toDateKey(new Date()))
+    store.tasks.filter((t) => t.date === toDateKey(new Date()) && isPlanTask(t))
   )
   const monthTasks = computed(() =>
-    store.tasks.filter((t) => t.date.startsWith(monthKey.value))
+    store.tasks.filter((t) => t.date.startsWith(monthKey.value) && isPlanTask(t))
   )
   const keyPlans = computed(() =>
     store.keyPlans.filter((p) => p.month === monthKey.value && String(p.title || '').trim())
   )
-  /** 本月統計：時程任務 + 本月重點計劃 */
+  const todos = computed(() =>
+    store.todos.filter((t) => String(t.title || '').trim())
+  )
+  /** 本月統計：時程計劃 + 本月重點計劃（不含日程） */
   const monthItems = computed(() => {
     const plans = keyPlans.value.map((p) => ({ status: p.status }))
     return [...monthTasks.value, ...plans]
   })
   const todayStats = computed(() => countByStatus(todayTasks.value))
   const monthStats = computed(() => countByStatus(monthItems.value))
-  /** 今日完成率：僅當日時程任務（與本月相同公式） */
   const todayRate = computed(() => {
     const items = todayTasks.value
     if (!items.length) return 0
@@ -68,21 +77,23 @@ export function useCalendarApp() {
     queueSave(message)
   }, 1500)
 
+  function snapshot() {
+    return {
+      version: 1,
+      tasks: store.tasks,
+      todos: store.todos,
+      keyPlans: store.keyPlans,
+      reviews: store.reviews
+    }
+  }
+
   function queueSave(message = 'Update calendar data') {
     syncError.value = ''
     saveQueue = saveQueue
       .then(async () => {
         if (!client.value) return
         saving.value = true
-        await client.value.save(
-          {
-            version: 1,
-            tasks: store.tasks,
-            keyPlans: store.keyPlans,
-            reviews: store.reviews
-          },
-          message
-        )
+        await client.value.save(snapshot(), message)
         syncOk.value = `已同步 ${new Date().toLocaleTimeString()}`
         setTimeout(() => {
           syncOk.value = ''
@@ -106,6 +117,15 @@ export function useCalendarApp() {
     scheduleSave(message)
   }
 
+  function applyLoaded(data) {
+    const normalized = normalizeStore(data)
+    store.version = normalized.version
+    store.tasks = normalized.tasks
+    store.todos = normalized.todos
+    store.keyPlans = normalized.keyPlans.filter((p) => String(p.title || '').trim())
+    store.reviews = normalized.reviews
+  }
+
   async function login(nextConfig) {
     loading.value = true
     syncError.value = ''
@@ -113,9 +133,8 @@ export function useCalendarApp() {
       const gh = new GitHubDataClient(nextConfig)
       await gh.validate()
       const data = await gh.load()
-      Object.assign(store, emptyStore(), data)
-      // 清掉舊版自動產生的空白重點計劃
-      store.keyPlans = store.keyPlans.filter((p) => String(p.title || '').trim())
+      Object.assign(store, emptyStore())
+      applyLoaded(data)
       client.value = gh
       config.value = nextConfig
       saveConfig(nextConfig)
@@ -136,7 +155,6 @@ export function useCalendarApp() {
     await login(config.value)
   }
 
-  /** 只重抓 GitHub 資料，不登出、不整頁刷新 */
   async function reloadData(options = {}) {
     const silent = options.silent === true
     if (!client.value) {
@@ -145,20 +163,13 @@ export function useCalendarApp() {
     if (saving.value) return
     syncError.value = ''
     if (silent) {
-      // 背景更新：只在有 debounce 待寫入時才先送出，避免每 60 秒空 commit
       scheduleSave.flush('Auto sync before refresh')
       await saveQueue
     } else {
       await persistNow('Sync before refresh')
     }
     const data = await client.value.load()
-    store.version = data.version || 1
-    store.tasks = Array.isArray(data.tasks) ? data.tasks : []
-    store.keyPlans = (Array.isArray(data.keyPlans) ? data.keyPlans : []).filter(
-      (p) => String(p.title || '').trim()
-    )
-    store.reviews =
-      data.reviews && typeof data.reviews === 'object' ? { ...data.reviews } : {}
+    applyLoaded(data)
     if (!silent) {
       syncOk.value = `已重新讀取 ${new Date().toLocaleTimeString()}`
       setTimeout(() => {
@@ -172,6 +183,10 @@ export function useCalendarApp() {
   }
 
   function tasksAt(dateKey, timeSlot) {
+    return store.tasks.filter((t) => taskCoversSlot(t, dateKey, timeSlot))
+  }
+
+  function tasksStartingAt(dateKey, timeSlot) {
     return store.tasks.filter((t) => t.date === dateKey && t.timeSlot === timeSlot)
   }
 
@@ -179,24 +194,37 @@ export function useCalendarApp() {
     return tasksAt(dateKey, timeSlot)[0] || null
   }
 
-  function upsertTask({ id, date, timeSlot, title, status }) {
+  function upsertTask({ id, date, timeSlot, title, status, kind, duration }) {
+    const nextKind = normalizeTaskKind(kind)
+    const nextStatus = nextKind === TASK_KIND.schedule ? undefined : status || STATUS.todo
+    const nextDuration = clampDuration(timeSlot, duration ?? 1)
+
     if (id) {
       const existing = store.tasks.find((t) => t.id === id)
       if (existing) {
         existing.title = title
         existing.date = date
         existing.timeSlot = timeSlot
-        if (status) existing.status = status
+        existing.duration = nextDuration
+        existing.kind = nextKind
+        if (nextKind === TASK_KIND.schedule) {
+          delete existing.status
+        } else {
+          existing.status = nextStatus
+        }
         return
       }
     }
-    store.tasks.push({
+    const item = {
       id: createId(),
       title,
       date,
       timeSlot,
-      status: status || STATUS.todo
-    })
+      duration: nextDuration,
+      kind: nextKind
+    }
+    if (nextKind === TASK_KIND.plan) item.status = nextStatus
+    store.tasks.push(item)
   }
 
   function removeTask(id) {
@@ -206,23 +234,88 @@ export function useCalendarApp() {
 
   function setTaskStatus(id, status) {
     const task = store.tasks.find((t) => t.id === id)
-    if (!task) return
+    if (!task || !isPlanTask(task)) return
     task.status = status
   }
 
   function cycleTaskStatus(id) {
     const task = store.tasks.find((t) => t.id === id)
-    if (!task) return
+    if (!task || !isPlanTask(task)) return
     task.status = nextStatus(task.status)
     persistNow(`Update task status: ${task.title || task.id}`)
   }
 
-  function moveTask(id, date, timeSlot) {
+  function moveTask(id, date, timeSlot, kind) {
     const task = store.tasks.find((t) => t.id === id)
     if (!task) return
     task.date = date
     task.timeSlot = timeSlot
+    task.duration = clampDuration(timeSlot, taskDuration(task))
+    if (kind) {
+      const nextKind = normalizeTaskKind(kind)
+      task.kind = nextKind
+      if (nextKind === TASK_KIND.schedule) {
+        delete task.status
+      } else if (!task.status) {
+        task.status = STATUS.todo
+      }
+    }
     persistNow(`Move task: ${task.title || task.id}`)
+  }
+
+  function addTodo({ title }) {
+    const trimmed = String(title || '').trim()
+    if (!trimmed) return null
+    const item = { id: createId(), title: trimmed }
+    store.todos.push(item)
+    persistNow('Add todo')
+    return item
+  }
+
+  function updateTodo(id, patch) {
+    const item = store.todos.find((t) => t.id === id)
+    if (!item) return
+    Object.assign(item, patch)
+  }
+
+  function removeTodo(id) {
+    const idx = store.todos.findIndex((t) => t.id === id)
+    if (idx < 0) return
+    store.todos.splice(idx, 1)
+    persistNow('Delete todo')
+  }
+
+  /** 時段項目拖回待辦：建立待辦並移除原項目 */
+  function placeTaskAsTodo(taskId) {
+    const idx = store.tasks.findIndex((t) => t.id === taskId)
+    if (idx < 0) return null
+    const task = store.tasks[idx]
+    const title = String(task.title || '').trim()
+    if (!title) return null
+    store.todos.push({ id: createId(), title })
+    store.tasks.splice(idx, 1)
+    persistNow(`Move task to todo: ${title}`)
+    return true
+  }
+
+  /** 待辦拖到時段：建立計劃／日程並移除待辦 */
+  function placeTodo(todoId, date, timeSlot, kind, duration = 1) {
+    const idx = store.todos.findIndex((t) => t.id === todoId)
+    if (idx < 0) return null
+    const todo = store.todos[idx]
+    const title = String(todo.title || '').trim()
+    if (!title) return null
+    upsertTask({
+      date,
+      timeSlot,
+      title,
+      kind,
+      status: STATUS.todo,
+      duration
+    })
+    store.todos.splice(idx, 1)
+    persistNow(`Place todo as ${normalizeTaskKind(kind)}: ${title}`)
+    return true
   }
 
   function addKeyPlan({ title, status = STATUS.todo }) {
@@ -298,6 +391,7 @@ export function useCalendarApp() {
     monthStats,
     monthRate,
     keyPlans,
+    todos,
     review,
     login,
     logout,
@@ -305,12 +399,18 @@ export function useCalendarApp() {
     reloadData,
     tasksOn,
     tasksAt,
+    tasksStartingAt,
     taskAt,
     upsertTask,
     removeTask,
     setTaskStatus,
     cycleTaskStatus,
     moveTask,
+    addTodo,
+    updateTodo,
+    removeTodo,
+    placeTodo,
+    placeTaskAsTodo,
     updateKeyPlan,
     addKeyPlan,
     removeKeyPlan,

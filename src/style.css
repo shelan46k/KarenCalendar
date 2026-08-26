@@ -54,16 +54,78 @@ body {
   @apply relative flex min-h-9 flex-col justify-center border border-line bg-white transition hover:bg-soft;
 }
 
+.grid-cell-drop-target {
+  background-color: color-mix(in srgb, #BBAEE3 45%, white);
+  box-shadow: inset 0 0 0 2px #BBAEE3;
+  z-index: 8;
+}
+
+.schedule-is-dragging .task-span,
+.schedule-is-dragging .task-span .task-chip {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.schedule-is-dragging .grid-cell {
+  z-index: 2;
+}
+
+.schedule-is-dragging .grid-cell-drop-target {
+  z-index: 8;
+}
+
 .task-chip {
-  @apply relative z-10 flex h-8 cursor-grab items-center rounded-sm border border-line bg-white text-[13px] font-medium leading-none text-ink shadow-sm active:cursor-grabbing;
+  @apply relative z-10 flex h-8 cursor-grab items-center rounded-sm border text-[13px] font-medium leading-none text-ink shadow-sm active:cursor-grabbing;
+}
+
+.task-chip-plan {
+  border-color: #b7d3ea;
+  background-color: #e8f3fb;
+}
+
+.task-chip-schedule {
+  border-color: #efc4d0;
+  background-color: #fcecef;
+}
+
+.task-span {
+  pointer-events: none;
+}
+
+.task-span .task-chip {
+  pointer-events: auto;
+  height: 100%;
+  min-height: 2rem;
+  align-items: center;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+.task-span .task-chip.task-chip-plan {
+  align-items: stretch;
 }
 
 .task-chip > span {
-  @apply pointer-events-none absolute inset-y-0 left-0 right-5 flex items-center justify-center truncate px-1 text-center;
+  @apply pointer-events-none min-w-0 flex-1 truncate px-1 text-left;
+}
+
+.task-span .task-chip > span {
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  white-space: normal;
+  overflow: hidden;
 }
 
 .task-chip .status-btn {
   @apply relative z-10 ml-auto mr-0.5 shrink-0;
+}
+
+.task-span .task-chip-plan .status-btn {
+  align-self: flex-start;
+  margin-top: 0.125rem;
+  margin-right: 0.125rem;
 }
 
 .status-btn {

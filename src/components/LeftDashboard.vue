@@ -7,6 +7,7 @@ import DonutChart from './DonutChart.vue'
 import MiniCalendar from './MiniCalendar.vue'
 import StatList from './StatList.vue'
 import StatusIcon from './StatusIcon.vue'
+import TodoList from './TodoList.vue'
 
 const app = inject('calendarApp')
 
@@ -125,6 +126,7 @@ function onReflectionsInput(e) {
 <template>
   <aside class="flex flex-col gap-3">
     <MiniCalendar />
+    <TodoList />
     <AgendaList />
 
     <CollapsibleSection id="today-stats" title="今日計劃情況" icon="today" :default-open="true">
