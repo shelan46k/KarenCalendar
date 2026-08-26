@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, nextTick, ref } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import {
   addDays,
   completionRate,
@@ -11,6 +11,7 @@ import {
   weekDates,
   weekdayLabel
 } from '../lib/utils'
+import SectionIcon from './SectionIcon.vue'
 import StatusIcon from './StatusIcon.vue'
 
 const app = inject('calendarApp')
@@ -92,12 +93,38 @@ function onDrop(event, date, timeSlot) {
 function allowDrop(event) {
   event.preventDefault()
 }
+
+watch(
+  () => app.focusTaskId.value,
+  (id) => {
+    if (!id) return
+    const task = app.store.tasks.find((t) => t.id === id)
+    if (!task) {
+      app.clearFocusTask()
+      return
+    }
+    editing.value = {
+      date: task.date,
+      timeSlot: task.timeSlot,
+      title: task.title || '',
+      status: task.status || STATUS.todo,
+      id: task.id
+    }
+    nextTick(() => {
+      titleInput.value?.focus()
+      app.clearFocusTask()
+    })
+  }
+)
 </script>
 
 <template>
   <section class="card-section relative flex min-h-[70vh] flex-col overflow-hidden p-0 lg:min-h-[calc(100vh-7rem)]">
     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-panel px-4 py-3">
-      <h2 class="text-base font-bold">每日計劃</h2>
+      <h2 class="flex items-center gap-1.5 text-base font-bold">
+        <SectionIcon name="clock" class-name="h-4 w-4 text-brand" />
+        每日計劃
+      </h2>
       <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"

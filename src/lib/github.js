@@ -30,10 +30,10 @@ export class GitHubDataClient {
       headers: this.headers()
     })
     if (res.status === 401) {
-      throw new Error('Token 無效或已過期，請重新產生 Personal Access Token。')
+      throw new Error('驗證失敗，請確認 Token 是否正確。')
     }
     if (res.status === 404) {
-      throw new Error('找不到儲存庫，或 Token 沒有存取此私有 Repo 的權限（需要 Contents: Read and write）。')
+      throw new Error('找不到儲存庫，請確認名稱與權限。')
     }
     if (!res.ok) {
       throw new Error(`驗證失敗（HTTP ${res.status}）`)
@@ -51,7 +51,7 @@ export class GitHubDataClient {
     }
 
     if (res.status === 401) {
-      throw new Error('Token 無效或已過期。')
+      throw new Error('驗證失敗，請確認 Token 是否正確。')
     }
     if (!res.ok) {
       const body = await res.text()
@@ -109,7 +109,7 @@ export class GitHubDataClient {
     }
 
     if (res.status === 401) {
-      throw new Error('Token 無效，無法寫入。')
+      throw new Error('驗證失敗，無法儲存。')
     }
     if (!res.ok) {
       const text = await res.text()

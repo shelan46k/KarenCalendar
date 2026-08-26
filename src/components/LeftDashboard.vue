@@ -1,25 +1,33 @@
 <script setup>
-import { computed, inject, ref, watch } from 'vue'
-import { completionRate, formatRate, toDateKey } from '../lib/utils'
+import { inject, nextTick, reactive, ref, watch } from 'vue'
+import { completionRate, formatRate, STATUS, toDateKey } from '../lib/utils'
 import DonutChart from './DonutChart.vue'
 import MiniCalendar from './MiniCalendar.vue'
+import AgendaList from './AgendaList.vue'
 import StatList from './StatList.vue'
+import SectionIcon from './SectionIcon.vue'
 import StatusIcon from './StatusIcon.vue'
 
 const app = inject('calendarApp')
 
-const monthRate = computed(() => completionRate(
-  app.store.tasks.filter((t) => t.date.startsWith(app.monthKey.value))
-))
-
 const achievements = ref(app.review.value.achievements)
 const reflections = ref(app.review.value.reflections)
+
+/** null | 'form' */
+const planUi = ref(null)
+const activePlan = ref(null)
+const planForm = reactive({
+  title: '',
+  status: STATUS.todo
+})
+const titleInput = ref(null)
 
 watch(
   () => app.monthKey.value,
   () => {
     achievements.value = app.review.value.achievements
     reflections.value = app.review.value.reflections
+    closePlanUi()
   }
 )
 
@@ -31,9 +39,50 @@ watch(
   }
 )
 
-function onKeyPlanTitle(plan, event) {
-  app.updateKeyPlan(plan.id, { title: event.target.value })
-  app.persistDebounced('Update key plan title')
+function closePlanUi() {
+  planUi.value = null
+  activePlan.value = null
+  planForm.title = ''
+  planForm.status = STATUS.todo
+}
+
+function openAddPlan() {
+  activePlan.value = null
+  planForm.title = ''
+  planForm.status = STATUS.todo
+  planUi.value = 'form'
+  nextTick(() => titleInput.value?.focus())
+}
+
+function openPlanEdit(plan) {
+  activePlan.value = plan
+  planForm.title = plan.title
+  planForm.status = plan.status
+  planUi.value = 'form'
+  nextTick(() => titleInput.value?.focus())
+}
+
+function deletePlan() {
+  if (!activePlan.value) return
+  if (!confirm('確定刪除這項重點計劃？')) return
+  app.removeKeyPlan(activePlan.value.id)
+  closePlanUi()
+}
+
+function savePlanForm() {
+  const title = planForm.title.trim()
+  if (!title) return
+
+  if (activePlan.value) {
+    app.updateKeyPlan(activePlan.value.id, {
+      title,
+      status: planForm.status
+    })
+    app.persistNow('Update key plan')
+  } else {
+    app.addKeyPlan({ title, status: planForm.status })
+  }
+  closePlanUi()
 }
 
 function onAchievementsInput(e) {
@@ -50,9 +99,13 @@ function onReflectionsInput(e) {
 <template>
   <aside class="flex flex-col gap-3">
     <MiniCalendar />
+    <AgendaList />
 
     <section class="card-section">
-      <h3 class="section-title">今日計劃情況</h3>
+      <h3 class="section-title">
+        <SectionIcon name="today" class-name="h-4 w-4 text-brand" />
+        今日計劃情況
+      </h3>
       <StatList
         :done="app.todayStats.value.done"
         :in-progress="app.todayStats.value.in_progress"
@@ -67,7 +120,10 @@ function onReflectionsInput(e) {
     </section>
 
     <section class="card-section">
-      <h3 class="section-title">本月計劃情況</h3>
+      <h3 class="section-title">
+        <SectionIcon name="chart" class-name="h-4 w-4 text-brand" />
+        本月計劃情況
+      </h3>
       <div class="flex items-center gap-3">
         <div class="flex-1">
           <StatList
@@ -77,33 +133,74 @@ function onReflectionsInput(e) {
             :total="app.monthStats.value.total"
           />
         </div>
-        <DonutChart :rate="monthRate" />
+        <DonutChart :rate="app.monthRate.value" />
       </div>
     </section>
 
     <section class="card-section">
-      <h3 class="section-title">本月重點計劃</h3>
-      <ul class="space-y-2">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="m-0 flex items-center gap-1.5 text-sm font-semibold text-ink">
+          <SectionIcon name="flag" class-name="h-4 w-4 text-brand" />
+          本月重點計劃
+        </h3>
+        <div class="flex flex-wrap items-center gap-2 text-[11px] text-mute">
+          <span class="inline-flex items-center gap-1">
+            <StatusIcon status="done" size="sm" />
+            已完成
+          </span>
+          <span class="inline-flex items-center gap-1">
+            <StatusIcon status="in_progress" size="sm" />
+            進行中
+          </span>
+          <span class="inline-flex items-center gap-1">
+            <StatusIcon status="todo" size="sm" />
+            未開始
+          </span>
+        </div>
+      </div>
+
+      <ul v-if="app.keyPlans.value.length" class="mb-3 space-y-2">
         <li
           v-for="(plan, index) in app.keyPlans.value"
           :key="plan.id"
           class="flex items-center gap-2"
         >
-          <span class="w-5 shrink-0 text-xs text-mute">{{ index + 1 }}.</span>
-          <input
-            :value="plan.title"
-            type="text"
-            class="min-w-0 flex-1 border-b border-transparent bg-transparent text-sm outline-none focus:border-brand"
-            placeholder="輸入重點計劃…"
-            @input="onKeyPlanTitle(plan, $event)"
+          <button
+            type="button"
+            class="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-1 py-1.5 text-left transition hover:bg-soft"
+            @click="openPlanEdit(plan)"
+          >
+            <span
+              class="w-5 shrink-0 text-xs"
+              :class="plan.status === 'done' ? 'text-slate-300' : 'text-mute'"
+            >{{ index + 1 }}.</span>
+            <span
+              class="min-w-0 flex-1 text-sm"
+              :class="plan.status === 'done' ? 'text-slate-400 line-through' : 'text-ink'"
+            >{{ plan.title }}</span>
+          </button>
+          <StatusIcon
+            :status="plan.status"
+            @click="app.cycleKeyPlanStatus(plan.id)"
           />
-          <StatusIcon :status="plan.status" @click="app.cycleKeyPlanStatus(plan.id)" />
         </li>
       </ul>
+      <p v-else class="mb-3 text-sm text-mute">尚未新增重點計劃</p>
+
+      <button
+        type="button"
+        class="w-full rounded-xl border border-dashed border-brand/40 bg-brand-soft/40 px-3 py-2.5 text-sm font-medium text-brand hover:bg-brand-soft"
+        @click="openAddPlan"
+      >
+        ＋ 新增計劃
+      </button>
     </section>
 
     <section class="card-section">
-      <h3 class="section-title">本月計劃覆盤</h3>
+      <h3 class="section-title">
+        <SectionIcon name="note" class-name="h-4 w-4 text-brand" />
+        本月計劃覆盤
+      </h3>
       <div class="space-y-3">
         <label class="block">
           <span class="mb-1 block text-xs font-semibold text-brand">成果</span>
@@ -125,8 +222,77 @@ function onReflectionsInput(e) {
             @input="onReflectionsInput"
           />
         </label>
-        <p class="text-[11px] text-mute">文字輸入會在 1.5 秒無操作後自動同步至 GitHub。</p>
       </div>
     </section>
+
+    <!-- 新增 / 編輯表單 -->
+    <div
+      v-if="planUi === 'form'"
+      class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+      @click.self="closePlanUi"
+    >
+      <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-soft">
+        <div class="flex items-start justify-between gap-3">
+          <h3 class="text-base font-bold">
+            {{ activePlan ? '編輯重點計劃' : '新增重點計劃' }}
+          </h3>
+          <button
+            v-if="activePlan"
+            type="button"
+            class="shrink-0 rounded-lg px-2 py-1 text-sm font-medium text-status-todo hover:bg-red-50"
+            @click="deletePlan"
+          >
+            刪除
+          </button>
+        </div>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-sm font-medium">計劃內容</span>
+          <input
+            ref="titleInput"
+            v-model="planForm.title"
+            type="text"
+            class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
+            placeholder="例如：訪談 8 家大型客戶"
+            @keydown.enter.prevent="savePlanForm"
+          />
+        </label>
+
+        <div class="mt-4">
+          <p class="mb-2 text-sm font-medium">狀態</p>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="s in ['todo', 'in_progress', 'done']"
+              :key="s"
+              type="button"
+              class="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"
+              :class="planForm.status === s ? 'border-brand bg-brand-soft' : 'border-line'"
+              @click="planForm.status = s"
+            >
+              <StatusIcon :status="s" />
+              {{ s === 'done' ? '已完成' : s === 'in_progress' ? '進行中' : '未開始' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-xl border border-line px-3 py-2 text-sm hover:bg-soft"
+            @click="closePlanUi"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-deep disabled:opacity-50"
+            :disabled="!planForm.title.trim()"
+            @click="savePlanForm"
+          >
+            儲存
+          </button>
+        </div>
+      </div>
+    </div>
   </aside>
 </template>

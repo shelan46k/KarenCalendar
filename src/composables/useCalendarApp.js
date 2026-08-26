@@ -1,4 +1,4 @@
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { GitHubDataClient } from '../lib/github'
 import {
   clearConfig,
@@ -6,10 +6,10 @@ import {
   createId,
   debounce,
   emptyStore,
-  ensureKeyPlans,
   getReview,
   loadConfig,
   nextStatus,
+  parseDateKey,
   saveConfig,
   STATUS,
   toDateKey,
@@ -27,6 +27,7 @@ export function useCalendarApp() {
   const selectedDate = ref(new Date())
   const viewMonth = ref(new Date(selectedDate.value.getFullYear(), selectedDate.value.getMonth(), 1))
   const weekAnchor = ref(new Date())
+  const focusTaskId = ref(null)
 
   const monthKey = computed(() => toMonthKey(viewMonth.value))
   const selectedKey = computed(() => toDateKey(selectedDate.value))
@@ -37,20 +38,23 @@ export function useCalendarApp() {
   const monthTasks = computed(() =>
     store.tasks.filter((t) => t.date.startsWith(monthKey.value))
   )
-  const todayStats = computed(() => countByStatus(todayTasks.value))
-  const monthStats = computed(() => countByStatus(monthTasks.value))
   const keyPlans = computed(() =>
-    store.keyPlans.filter((p) => p.month === monthKey.value).slice(0, 10)
+    store.keyPlans.filter((p) => p.month === monthKey.value && String(p.title || '').trim())
   )
+  /** 本月統計：時程任務 + 本月重點計劃 */
+  const monthItems = computed(() => {
+    const plans = keyPlans.value.map((p) => ({ status: p.status }))
+    return [...monthTasks.value, ...plans]
+  })
+  const todayStats = computed(() => countByStatus(todayTasks.value))
+  const monthStats = computed(() => countByStatus(monthItems.value))
+  const monthRate = computed(() => {
+    const items = monthItems.value
+    if (!items.length) return 0
+    const done = items.filter((t) => t.status === STATUS.done).length
+    return (done / items.length) * 100
+  })
   const review = computed(() => getReview(store, monthKey.value))
-
-  watch(
-    monthKey,
-    (key) => {
-      ensureKeyPlans(store, key)
-    },
-    { immediate: true }
-  )
 
   let saveQueue = Promise.resolve()
   const scheduleSave = debounce((message) => {
@@ -103,7 +107,8 @@ export function useCalendarApp() {
       await gh.validate()
       const data = await gh.load()
       Object.assign(store, emptyStore(), data)
-      ensureKeyPlans(store, toMonthKey(viewMonth.value))
+      // 清掉舊版自動產生的空白重點計劃
+      store.keyPlans = store.keyPlans.filter((p) => String(p.title || '').trim())
       client.value = gh
       config.value = nextConfig
       saveConfig(nextConfig)
@@ -185,10 +190,31 @@ export function useCalendarApp() {
     persistNow(`Move task: ${task.title || task.id}`)
   }
 
+  function addKeyPlan({ title, status = STATUS.todo }) {
+    const trimmed = String(title || '').trim()
+    if (!trimmed) return null
+    const plan = {
+      id: createId(),
+      month: monthKey.value,
+      title: trimmed,
+      status
+    }
+    store.keyPlans.push(plan)
+    persistNow('Add key plan')
+    return plan
+  }
+
   function updateKeyPlan(id, patch) {
     const plan = store.keyPlans.find((p) => p.id === id)
     if (!plan) return
     Object.assign(plan, patch)
+  }
+
+  function removeKeyPlan(id) {
+    const idx = store.keyPlans.findIndex((p) => p.id === id)
+    if (idx < 0) return
+    store.keyPlans.splice(idx, 1)
+    persistNow('Delete key plan')
   }
 
   function cycleKeyPlanStatus(id) {
@@ -196,6 +222,19 @@ export function useCalendarApp() {
     if (!plan) return
     plan.status = nextStatus(plan.status)
     persistNow('Update key plan status')
+  }
+
+  function jumpToTask(task) {
+    if (!task?.date) return
+    const date = parseDateKey(task.date)
+    selectedDate.value = date
+    weekAnchor.value = date
+    viewMonth.value = new Date(date.getFullYear(), date.getMonth(), 1)
+    focusTaskId.value = task.id
+  }
+
+  function clearFocusTask() {
+    focusTaskId.value = null
   }
 
   function updateReview(field, value) {
@@ -216,10 +255,12 @@ export function useCalendarApp() {
     selectedDate,
     viewMonth,
     weekAnchor,
+    focusTaskId,
     monthKey,
     selectedKey,
     todayStats,
     monthStats,
+    monthRate,
     keyPlans,
     review,
     login,
@@ -233,8 +274,12 @@ export function useCalendarApp() {
     cycleTaskStatus,
     moveTask,
     updateKeyPlan,
+    addKeyPlan,
+    removeKeyPlan,
     cycleKeyPlanStatus,
     updateReview,
+    jumpToTask,
+    clearFocusTask,
     persistNow,
     persistDebounced
   }
