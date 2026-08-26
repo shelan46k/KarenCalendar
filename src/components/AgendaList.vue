@@ -130,10 +130,7 @@ function chipClass(active) {
           :title="`${task.title || '（未命名）'} · ${displayDate(task.date)} · ${task.timeSlot}`"
           @click="onSelect(task)"
         >
-          <p
-            class="truncate text-sm"
-            :class="task.status === 'done' ? 'text-slate-400 line-through' : 'text-ink'"
-          >
+          <p class="truncate text-sm text-ink">
             {{ task.title || '（未命名）' }}
           </p>
           <p class="mt-0.5 text-[11px] text-mute">
