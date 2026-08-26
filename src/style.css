@@ -60,6 +60,10 @@ body {
   z-index: 8;
 }
 
+.grid-row-drop-hint {
+  background-color: color-mix(in srgb, #BBAEE3 18%, white) !important;
+}
+
 .schedule-is-dragging .task-span,
 .schedule-is-dragging .task-span .task-chip {
   opacity: 0 !important;

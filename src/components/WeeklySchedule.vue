@@ -53,6 +53,10 @@ function isDropTarget(day, slot) {
   return dropTarget.value === cellKey(day, slot)
 }
 
+function isDropTargetRow(slot) {
+  return !!dropTarget.value && dropTarget.value.endsWith(`|${slot}`)
+}
+
 function clearDropTarget() {
   dropTarget.value = null
 }
@@ -471,6 +475,7 @@ onUnmounted(() => {
           <template v-for="(slot, si) in TIME_SLOTS" :key="`label-${slot}`">
             <div
               class="sticky left-0 z-10 flex items-center justify-center border-b border-r border-line bg-soft px-1 text-[11px] font-semibold leading-none text-ink shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
+              :class="isDropTargetRow(slot) ? 'grid-row-drop-hint' : ''"
               :style="{ gridColumn: 1, gridRow: si + 1 }"
             >
               {{ Number(slot.slice(0, 2)) }}:00
@@ -482,7 +487,10 @@ onUnmounted(() => {
               v-for="(day, di) in days"
               :key="`${toDateKey(day)}-${slot}`"
               class="grid-cell"
-              :class="isDropTarget(day, slot) ? 'grid-cell-drop-target' : ''"
+              :class="{
+                'grid-cell-drop-target': isDropTarget(day, slot),
+                'grid-row-drop-hint': isDropTargetRow(slot) && !isDropTarget(day, slot)
+              }"
               :style="{ gridColumn: di + 2, gridRow: si + 1 }"
               @click="openCell(day, slot)"
               @dragenter="onDragEnter($event, day, slot)"
