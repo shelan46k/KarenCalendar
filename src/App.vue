@@ -10,6 +10,7 @@ provide('calendarApp', app)
 
 const bootError = ref('')
 const booting = ref(!!app.config.value)
+const refreshing = ref(false)
 
 onMounted(async () => {
   if (!app.config.value) {
@@ -42,6 +43,26 @@ function handleLogout() {
     app.logout()
   }
 }
+
+/** 清除瀏覽器／PWA 暫存後重新載入，保留登入設定 */
+async function handleRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys()
+      await Promise.all(keys.map((key) => caches.delete(key)))
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(regs.map((reg) => reg.update().catch(() => {})))
+    }
+  } catch {
+    // 暫存清除失敗仍繼續重新載入
+  } finally {
+    window.location.reload()
+  }
+}
 </script>
 
 <template>
@@ -64,6 +85,15 @@ function handleLogout() {
         </div>
 
         <div class="flex shrink-0 items-center gap-2">
+          <button
+            v-if="app.config.value"
+            type="button"
+            class="rounded-xl border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-soft disabled:opacity-60"
+            :disabled="refreshing"
+            @click="handleRefresh"
+          >
+            {{ refreshing ? '讀取中…' : '重新讀取' }}
+          </button>
           <button
             v-if="app.config.value"
             type="button"
