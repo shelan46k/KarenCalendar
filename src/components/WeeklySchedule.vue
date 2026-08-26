@@ -5,6 +5,8 @@ import {
   completionRate,
   formatDisplayDate,
   formatRate,
+  SELECT_COLOR,
+  selectBorderBgStyle,
   STATUS,
   TIME_SLOTS,
   toDateKey,
@@ -155,28 +157,29 @@ watch(
 <template>
   <section class="card-section relative flex min-h-[70vh] flex-col overflow-hidden p-0 lg:min-h-[calc(100vh-7rem)]">
     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-panel px-4 py-3">
-      <h2 class="flex items-center gap-1.5 text-base font-bold">
-        <SectionIcon name="clock" class-name="h-4 w-4 text-brand" />
+      <h2 class="flex items-center gap-1.5 text-base font-bold text-ink">
+        <SectionIcon name="clock" class-name="h-4 w-4 text-brand-deep" />
         每日計劃
       </h2>
       <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          class="rounded-lg border border-line bg-white px-3 py-1.5 text-sm hover:bg-soft"
+          class="rounded-lg border border-line bg-white px-3 py-1.5 text-sm font-medium text-ink hover:bg-soft"
           @click="prevWeek"
         >
           上一週
         </button>
         <button
           type="button"
-          class="rounded-lg border border-brand bg-brand px-3 py-1.5 text-sm text-white hover:bg-brand-deep"
+          class="rounded-lg border px-3 py-1.5 text-sm font-semibold text-ink hover:brightness-[0.97]"
+          :style="selectBorderBgStyle"
           @click="goThisWeek"
         >
           本週
         </button>
         <button
           type="button"
-          class="rounded-lg border border-line bg-white px-3 py-1.5 text-sm hover:bg-soft"
+          class="rounded-lg border border-line bg-white px-3 py-1.5 text-sm font-medium text-ink hover:bg-soft"
           @click="nextWeek"
         >
           下一週
@@ -191,7 +194,7 @@ watch(
           style="grid-template-columns: 64px repeat(7, minmax(0, 1fr))"
         >
           <div
-            class="sticky left-0 z-30 border-r border-line bg-panel px-2 py-2 text-center text-xs text-mute shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
+            class="sticky left-0 z-30 border-r border-line bg-panel px-2 py-2 text-center text-xs font-semibold text-ink shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
           >
             時段
           </div>
@@ -200,17 +203,19 @@ watch(
             :key="toDateKey(day)"
             class="border-r border-line px-2 py-2 text-center last:border-r-0"
           >
-            <p class="text-xs font-semibold text-ink">
+            <p class="text-xs font-bold text-ink">
               {{ formatDisplayDate(day) }}
             </p>
-            <p class="text-[11px] text-mute">{{ weekdayLabel(day) }}</p>
-            <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-white">
+            <p class="text-[11px] font-medium text-ink/80">{{ weekdayLabel(day) }}</p>
+            <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-brand-soft">
               <div
-                class="h-full rounded-full bg-brand transition-all"
-                :style="{ width: `${dayRate(day)}%` }"
+                class="h-full rounded-full transition-all"
+                :style="{ width: `${dayRate(day)}%`, backgroundColor: SELECT_COLOR }"
               />
             </div>
-            <p class="mt-0.5 text-[10px] font-medium text-brand">{{ formatRate(dayRate(day)) }}</p>
+            <p class="mt-0.5 text-[10px] font-semibold text-brand-deep">
+              {{ formatRate(dayRate(day)) }}
+            </p>
           </div>
         </div>
 
@@ -221,7 +226,7 @@ watch(
           style="grid-template-columns: 64px repeat(7, minmax(0, 1fr))"
         >
           <div
-            class="sticky left-0 z-10 flex min-h-9 items-center justify-center border-b border-r border-line bg-soft px-1 text-[11px] leading-none text-mute shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
+            class="sticky left-0 z-10 flex min-h-9 items-center justify-center border-b border-r border-line bg-soft px-1 text-[11px] font-semibold leading-none text-ink shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
           >
             {{ Number(slot.slice(0, 2)) }}:00
           </div>
@@ -240,13 +245,13 @@ watch(
               <div
                 v-for="task in cellTasks(day, slot)"
                 :key="task.id"
-                class="task-chip relative"
+                class="task-chip relative text-ink"
                 draggable="true"
                 :title="task.title"
                 @dragstart="onDragStart($event, task)"
                 @click.stop="openCell(day, slot)"
               >
-                <span class="truncate">{{ task.title }}</span>
+                <span class="truncate font-medium text-ink">{{ task.title }}</span>
                 <StatusIcon
                   :status="task.status"
                   size="sm"
@@ -268,18 +273,18 @@ watch(
       <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-soft">
         <div class="border-b border-line px-4 py-3">
           <h3 class="text-base font-bold">選擇操作</h3>
-          <p class="mt-1 text-xs text-mute">{{ dialog.date }} · {{ dialog.timeSlot }}</p>
+          <p class="mt-1 text-xs font-medium text-ink/70">{{ dialog.date }} · {{ dialog.timeSlot }}</p>
         </div>
 
         <button
           type="button"
-          class="block w-full border-b border-line px-4 py-3 text-left text-sm font-medium text-brand hover:bg-brand-soft/40"
+          class="block w-full border-b border-line px-4 py-3 text-left text-sm font-semibold text-brand-deep hover:bg-brand-soft/40"
           @click="openAddForm(dialog.date, dialog.timeSlot)"
         >
           ＋ 新增計劃
         </button>
 
-        <p class="px-4 pt-3 text-xs font-semibold text-mute">編輯既有計劃</p>
+        <p class="px-4 pt-3 text-xs font-semibold text-ink/70">編輯既有計劃</p>
         <div class="max-h-64 overflow-y-auto py-1">
           <button
             v-for="task in pickerTasks()"
@@ -314,8 +319,8 @@ watch(
       @click.self="closeDialog"
     >
       <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-soft">
-        <h3 class="text-base font-bold">{{ dialog.id ? '編輯任務' : '新增任務' }}</h3>
-        <p class="mt-1 text-xs text-mute">{{ dialog.date }} · {{ dialog.timeSlot }}</p>
+        <h3 class="text-base font-bold text-ink">{{ dialog.id ? '編輯任務' : '新增任務' }}</h3>
+        <p class="mt-1 text-xs font-medium text-ink/70">{{ dialog.date }} · {{ dialog.timeSlot }}</p>
 
         <label class="mt-4 block">
           <span class="mb-1 block text-sm font-medium">任務名稱</span>

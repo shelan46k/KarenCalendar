@@ -3,6 +3,8 @@ import { computed, inject } from 'vue'
 import {
   formatDisplayDate,
   monthMatrix,
+  SELECT_COLOR,
+  selectBgStyle,
   STATUS,
   toDateKey,
   weekdayLabel
@@ -117,8 +119,8 @@ function dayClass(day) {
 
   if (selected) {
     return incomplete
-      ? 'bg-status-todo text-white'
-      : 'bg-brand text-white'
+      ? 'bg-status-todo font-semibold text-white'
+      : 'font-semibold text-ink'
   }
   if (outside) {
     return incomplete ? 'bg-red-50 text-red-300' : 'text-slate-300'
@@ -126,17 +128,26 @@ function dayClass(day) {
   if (incomplete) {
     return [
       'bg-red-50 font-semibold text-status-todo hover:bg-red-100',
-      isToday ? 'ring-1 ring-status-todo/50' : ''
+      isToday ? 'ring-1 ring-status-todo/40' : ''
     ]
   }
-  return [
-    'hover:bg-panel',
-    isToday ? 'ring-1 ring-brand/40' : ''
-  ]
+  return ['hover:bg-panel', isToday ? 'font-semibold text-ink' : '']
+}
+
+function dayStyle(day) {
+  const selected = isSameDay(day, app.selectedDate.value)
+  const incomplete = hasIncomplete(day)
+  const isToday = isSameDay(day, today)
+
+  if (selected && !incomplete) return selectBgStyle
+  if (!selected && isToday && !incomplete) {
+    return { boxShadow: `inset 0 0 0 1.5px ${SELECT_COLOR}` }
+  }
+  return undefined
 }
 
 const selectClass =
-  'rounded-lg border border-line bg-white px-1.5 py-1 text-sm font-semibold text-ink outline-none focus:ring-2 focus:ring-brand'
+  'rounded-lg border border-line bg-white px-1.5 py-1 text-sm font-semibold text-ink outline-none focus:ring-2 focus:ring-accent'
 </script>
 
 <template>
@@ -192,6 +203,7 @@ const selectClass =
         type="button"
         class="aspect-square rounded-lg text-sm transition"
         :class="dayClass(day)"
+        :style="dayStyle(day)"
         :title="hasIncomplete(day) ? `${weekdayLabel(day)}（有未完成）` : weekdayLabel(day)"
         @click="selectDay(day)"
       >

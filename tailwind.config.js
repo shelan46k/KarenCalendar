@@ -4,20 +4,23 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: '#1f2937',
-        mute: '#6b7280',
-        line: '#e5e7eb',
-        soft: '#f3f4f6',
-        panel: '#eef2f6',
+        // 以 #BBAEE3 為主色的柔和紫系
+        ink: '#1c1826',
+        mute: '#5c566c',
+        line: '#e4e0ec',
+        soft: '#f6f5fa',
+        panel: '#f1eef7',
         brand: {
-          DEFAULT: '#3b82a0',
-          soft: '#d7e8f0',
-          deep: '#2a6a84'
+          DEFAULT: '#8f7cc8',
+          soft: '#ebe6f6',
+          deep: '#7463b0'
         },
+        /** 選中／進度／圓環高亮 */
+        accent: '#BBAEE3', // = SELECT_COLOR；日曆／行程篩選／本週／進度條務必用 inline 或此色
         status: {
-          done: '#22a06b',
-          progress: '#e2a100',
-          todo: '#e24b4a'
+          done: '#4a9b7a',
+          progress: '#c4a035',
+          todo: '#c96b6b'
         }
       },
       fontFamily: {
@@ -30,7 +33,7 @@ export default {
         ]
       },
       boxShadow: {
-        soft: '0 8px 30px rgba(31, 41, 55, 0.06)'
+        soft: '0 8px 30px rgba(47, 43, 58, 0.06)'
       }
     }
   },

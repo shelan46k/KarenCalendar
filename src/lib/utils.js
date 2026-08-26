@@ -9,9 +9,20 @@ export const STATUS = {
 export const STATUS_CYCLE = [STATUS.todo, STATUS.in_progress, STATUS.done]
 
 export const STATUS_META = {
-  done: { label: '已完成', icon: '✓', class: 'bg-status-done', color: '#22a06b' },
-  in_progress: { label: '進行中', icon: '❚', class: 'bg-status-progress', color: '#e2a100' },
-  todo: { label: '未開始', icon: '✕', class: 'bg-status-todo', color: '#e24b4a' }
+  done: { label: '已完成', icon: '✓', class: 'bg-status-done', color: '#4a9b7a' },
+  in_progress: { label: '進行中', icon: '❚', class: 'bg-status-progress', color: '#c4a035' },
+  todo: { label: '未開始', icon: '✕', class: 'bg-status-todo', color: '#c96b6b' }
+}
+
+/**
+ * 選中高亮色（務必同步）：
+ * 日曆選中日、全部行程篩選 chip、每日計劃「本週」、每日計劃進度條／百分比、圓環
+ */
+export const SELECT_COLOR = '#BBAEE3'
+export const selectBgStyle = { backgroundColor: SELECT_COLOR }
+export const selectBorderBgStyle = {
+  backgroundColor: SELECT_COLOR,
+  borderColor: SELECT_COLOR
 }
 
 /** 06:00 ~ 05:00（隔天）共 24 小時 */

@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { SELECT_COLOR } from '../lib/utils'
 
 const props = defineProps({
   rate: { type: Number, default: 0 },
@@ -19,13 +20,13 @@ const dash = computed(() => {
 <template>
   <div class="relative mx-auto h-28 w-28">
     <svg viewBox="0 0 100 100" class="h-full w-full -rotate-90">
-      <circle cx="50" cy="50" r="42" fill="none" stroke="#e8eef2" stroke-width="10" />
+      <circle cx="50" cy="50" r="42" fill="none" stroke="#ebe6f6" stroke-width="10" />
       <circle
         cx="50"
         cy="50"
         r="42"
         fill="none"
-        stroke="#3b82a0"
+        :stroke="SELECT_COLOR"
         stroke-width="10"
         stroke-linecap="round"
         :stroke-dasharray="dash.circ"

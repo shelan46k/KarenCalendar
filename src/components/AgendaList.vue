@@ -3,6 +3,7 @@ import { computed, inject, ref } from 'vue'
 import {
   formatDisplayDate,
   parseDateKey,
+  selectBgStyle,
   STATUS,
   TIME_SLOTS,
   weekdayLabel
@@ -61,8 +62,12 @@ function onSelect(task) {
 
 function chipClass(active) {
   return active
-    ? 'bg-brand text-white'
+    ? 'font-semibold text-ink'
     : 'bg-soft text-mute hover:bg-panel'
+}
+
+function chipStyle(active) {
+  return active ? selectBgStyle : undefined
 }
 </script>
 
@@ -77,6 +82,7 @@ function chipClass(active) {
           type="button"
           class="rounded-lg px-2.5 py-1 text-xs font-medium transition"
           :class="chipClass(scope === 'month')"
+          :style="chipStyle(scope === 'month')"
           @click="scope = 'month'"
         >
           本月
@@ -85,6 +91,7 @@ function chipClass(active) {
           type="button"
           class="rounded-lg px-2.5 py-1 text-xs font-medium transition"
           :class="chipClass(scope === 'all')"
+          :style="chipStyle(scope === 'all')"
           @click="scope = 'all'"
         >
           全部
@@ -97,6 +104,7 @@ function chipClass(active) {
           type="button"
           class="rounded-lg px-2.5 py-1 text-xs font-medium transition"
           :class="chipClass(showIncomplete)"
+          :style="chipStyle(showIncomplete)"
           @click="showIncomplete = !showIncomplete"
         >
           未完成
@@ -105,6 +113,7 @@ function chipClass(active) {
           type="button"
           class="rounded-lg px-2.5 py-1 text-xs font-medium transition"
           :class="chipClass(showDone)"
+          :style="chipStyle(showDone)"
           @click="showDone = !showDone"
         >
           已完成
