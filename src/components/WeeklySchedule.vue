@@ -157,7 +157,11 @@ watch(
           class="sticky top-0 z-20 grid border-b border-line bg-panel"
           style="grid-template-columns: 64px repeat(7, minmax(0, 1fr))"
         >
-          <div class="border-r border-line px-2 py-2 text-center text-xs text-mute">時段</div>
+          <div
+            class="sticky left-0 z-30 border-r border-line bg-panel px-2 py-2 text-center text-xs text-mute shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
+          >
+            時段
+          </div>
           <div
             v-for="day in days"
             :key="toDateKey(day)"
@@ -185,7 +189,7 @@ watch(
           style="grid-template-columns: 64px repeat(7, minmax(0, 1fr))"
         >
           <div
-            class="flex h-9 items-center justify-center border-b border-r border-line bg-soft/60 px-1 text-[11px] leading-none text-mute"
+            class="sticky left-0 z-10 flex h-9 items-center justify-center border-b border-r border-line bg-soft px-1 text-[11px] leading-none text-mute shadow-[2px_0_6px_rgba(15,23,42,0.06)]"
           >
             {{ Number(slot.slice(0, 2)) }}:00
           </div>

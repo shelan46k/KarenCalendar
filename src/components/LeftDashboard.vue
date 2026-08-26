@@ -1,11 +1,11 @@
 <script setup>
-import { inject, nextTick, reactive, ref, watch } from 'vue'
+import { computed, inject, nextTick, reactive, ref, watch } from 'vue'
 import { completionRate, formatRate, STATUS, toDateKey } from '../lib/utils'
+import AgendaList from './AgendaList.vue'
+import CollapsibleSection from './CollapsibleSection.vue'
 import DonutChart from './DonutChart.vue'
 import MiniCalendar from './MiniCalendar.vue'
-import AgendaList from './AgendaList.vue'
 import StatList from './StatList.vue'
-import SectionIcon from './SectionIcon.vue'
 import StatusIcon from './StatusIcon.vue'
 
 const app = inject('calendarApp')
@@ -13,7 +13,6 @@ const app = inject('calendarApp')
 const achievements = ref(app.review.value.achievements)
 const reflections = ref(app.review.value.reflections)
 
-/** null | 'form' */
 const planUi = ref(null)
 const activePlan = ref(null)
 const planForm = reactive({
@@ -21,6 +20,39 @@ const planForm = reactive({
   status: STATUS.todo
 })
 const titleInput = ref(null)
+
+const todayRateText = computed(() =>
+  formatRate(
+    completionRate(app.store.tasks.filter((t) => t.date === toDateKey(new Date())))
+  )
+)
+
+const todaySummary = computed(() => {
+  const s = app.todayStats.value
+  return `完成 ${s.done}/${s.total} · 完成率 ${todayRateText.value}`
+})
+
+const monthSummary = computed(() => {
+  const s = app.monthStats.value
+  return `完成 ${s.done}/${s.total} · 完成率 ${formatRate(app.monthRate.value)}`
+})
+
+const keyPlanSummary = computed(() => {
+  const plans = app.keyPlans.value
+  if (!plans.length) return '尚未新增重點計劃'
+  const done = plans.filter((p) => p.status === STATUS.done).length
+  return `${plans.length} 項 · 已完成 ${done}`
+})
+
+const reviewSummary = computed(() => {
+  const a = (achievements.value || '').trim()
+  const r = (reflections.value || '').trim()
+  if (!a && !r) return '尚未填寫成果／反思'
+  const bits = []
+  if (a) bits.push('成果已填')
+  if (r) bits.push('反思已填')
+  return bits.join(' · ')
+})
 
 watch(
   () => app.monthKey.value,
@@ -101,11 +133,8 @@ function onReflectionsInput(e) {
     <MiniCalendar />
     <AgendaList />
 
-    <section class="card-section">
-      <h3 class="section-title">
-        <SectionIcon name="today" class-name="h-4 w-4 text-brand" />
-        今日計劃情況
-      </h3>
+    <CollapsibleSection id="today-stats" title="今日計劃情況" icon="today" :default-open="true">
+      <template #summary>{{ todaySummary }}</template>
       <StatList
         :done="app.todayStats.value.done"
         :in-progress="app.todayStats.value.in_progress"
@@ -114,16 +143,12 @@ function onReflectionsInput(e) {
         show-ratio
       />
       <p class="mt-2 text-right text-xs text-mute">
-        今日完成率
-        {{ formatRate(completionRate(app.store.tasks.filter((t) => t.date === toDateKey(new Date())))) }}
+        今日完成率 {{ todayRateText }}
       </p>
-    </section>
+    </CollapsibleSection>
 
-    <section class="card-section">
-      <h3 class="section-title">
-        <SectionIcon name="chart" class-name="h-4 w-4 text-brand" />
-        本月計劃情況
-      </h3>
+    <CollapsibleSection id="month-stats" title="本月計劃情況" icon="chart" :default-open="true">
+      <template #summary>{{ monthSummary }}</template>
       <div class="flex items-center gap-3">
         <div class="flex-1">
           <StatList
@@ -135,28 +160,24 @@ function onReflectionsInput(e) {
         </div>
         <DonutChart :rate="app.monthRate.value" />
       </div>
-    </section>
+    </CollapsibleSection>
 
-    <section class="card-section">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="m-0 flex items-center gap-1.5 text-sm font-semibold text-ink">
-          <SectionIcon name="flag" class-name="h-4 w-4 text-brand" />
-          本月重點計劃
-        </h3>
-        <div class="flex flex-wrap items-center gap-2 text-[11px] text-mute">
-          <span class="inline-flex items-center gap-1">
-            <StatusIcon status="done" size="sm" />
-            已完成
-          </span>
-          <span class="inline-flex items-center gap-1">
-            <StatusIcon status="in_progress" size="sm" />
-            進行中
-          </span>
-          <span class="inline-flex items-center gap-1">
-            <StatusIcon status="todo" size="sm" />
-            未開始
-          </span>
-        </div>
+    <CollapsibleSection id="key-plans" title="本月重點計劃" icon="flag" :default-open="true">
+      <template #summary>{{ keyPlanSummary }}</template>
+
+      <div class="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-mute">
+        <span class="inline-flex items-center gap-1">
+          <StatusIcon status="done" size="sm" />
+          已完成
+        </span>
+        <span class="inline-flex items-center gap-1">
+          <StatusIcon status="in_progress" size="sm" />
+          進行中
+        </span>
+        <span class="inline-flex items-center gap-1">
+          <StatusIcon status="todo" size="sm" />
+          未開始
+        </span>
       </div>
 
       <ul v-if="app.keyPlans.value.length" class="mb-3 space-y-2">
@@ -195,13 +216,10 @@ function onReflectionsInput(e) {
       >
         ＋ 新增計劃
       </button>
-    </section>
+    </CollapsibleSection>
 
-    <section class="card-section">
-      <h3 class="section-title">
-        <SectionIcon name="note" class-name="h-4 w-4 text-brand" />
-        本月計劃覆盤
-      </h3>
+    <CollapsibleSection id="review" title="本月計劃覆盤" icon="note" :default-open="false">
+      <template #summary>{{ reviewSummary }}</template>
       <div class="space-y-3">
         <label class="block">
           <span class="mb-1 block text-xs font-semibold text-brand">成果</span>
@@ -224,9 +242,8 @@ function onReflectionsInput(e) {
           />
         </label>
       </div>
-    </section>
+    </CollapsibleSection>
 
-    <!-- 新增 / 編輯表單 -->
     <div
       v-if="planUi === 'form'"
       class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"

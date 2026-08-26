@@ -7,14 +7,12 @@ import {
   TIME_SLOTS,
   weekdayLabel
 } from '../lib/utils'
-import SectionIcon from './SectionIcon.vue'
+import CollapsibleSection from './CollapsibleSection.vue'
 import StatusIcon from './StatusIcon.vue'
 
 const app = inject('calendarApp')
 
-/** 範圍：本月 或 全部（二選一） */
 const scope = ref('month')
-/** 狀態：可多選；都不選 = 全部狀態 */
 const showIncomplete = ref(false)
 const showDone = ref(false)
 
@@ -43,6 +41,15 @@ const filteredTasks = computed(() => {
   })
 })
 
+const incompleteCount = computed(
+  () => filteredTasks.value.filter((t) => t.status !== STATUS.done).length
+)
+
+const summaryText = computed(() => {
+  const scopeLabel = scope.value === 'month' ? '本月' : '全部'
+  return `${scopeLabel} ${filteredTasks.value.length} 筆 · 未完成 ${incompleteCount.value}`
+})
+
 function displayDate(dateKey) {
   const d = parseDateKey(dateKey)
   return `${formatDisplayDate(d)} ${weekdayLabel(d)}`
@@ -60,14 +67,8 @@ function chipClass(active) {
 </script>
 
 <template>
-  <section class="card-section">
-    <div class="mb-3 flex items-center justify-between gap-2">
-      <h3 class="m-0 flex items-center gap-1.5 text-sm font-semibold text-ink">
-        <SectionIcon name="list" class-name="h-4 w-4 text-brand" />
-        全部行程
-      </h3>
-      <span class="text-xs text-mute">{{ filteredTasks.length }} 筆</span>
-    </div>
+  <CollapsibleSection id="agenda" title="全部行程" icon="list" :default-open="true">
+    <template #summary>{{ summaryText }}</template>
 
     <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
       <div class="flex flex-wrap items-center gap-1.5">
@@ -142,5 +143,5 @@ function chipClass(active) {
       </div>
     </div>
     <p v-else class="text-sm text-mute">沒有符合的行程</p>
-  </section>
+  </CollapsibleSection>
 </template>

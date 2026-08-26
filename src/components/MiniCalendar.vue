@@ -1,12 +1,13 @@
 <script setup>
 import { computed, inject } from 'vue'
 import {
+  formatDisplayDate,
   monthMatrix,
   STATUS,
   toDateKey,
   weekdayLabel
 } from '../lib/utils'
-import SectionIcon from './SectionIcon.vue'
+import CollapsibleSection from './CollapsibleSection.vue'
 
 const app = inject('calendarApp')
 
@@ -42,13 +43,29 @@ const matrix = computed(() =>
   monthMatrix(selectedYear.value, selectedMonth.value)
 )
 
-/** 有未完成事項（進行中／未開始）的日期 */
 const incompleteDates = computed(() => {
   const set = new Set()
   for (const task of app.store.tasks) {
     if (task.status !== STATUS.done) set.add(task.date)
   }
   return set
+})
+
+const incompleteInViewMonth = computed(() => {
+  const prefix = `${selectedYear.value}-${String(selectedMonth.value + 1).padStart(2, '0')}`
+  let n = 0
+  for (const d of incompleteDates.value) {
+    if (d.startsWith(prefix)) n += 1
+  }
+  return n
+})
+
+const summaryText = computed(() => {
+  const y = selectedYear.value
+  const m = String(selectedMonth.value + 1).padStart(2, '0')
+  const selected = formatDisplayDate(app.selectedDate.value)
+  const inc = incompleteInViewMonth.value
+  return `${y}/${m} · 已選 ${selected}${inc ? ` · ${inc} 天有未完成` : ''}`
 })
 
 function setViewMonth(year, month) {
@@ -123,7 +140,9 @@ const selectClass =
 </script>
 
 <template>
-  <section class="card-section">
+  <CollapsibleSection id="calendar" title="日曆" icon="calendar" :default-open="true">
+    <template #summary>{{ summaryText }}</template>
+
     <div class="mb-3 flex items-center justify-between gap-2">
       <button
         type="button"
@@ -134,7 +153,6 @@ const selectClass =
       </button>
 
       <div class="flex min-w-0 flex-1 items-center justify-center gap-1.5">
-        <SectionIcon name="calendar" class-name="h-4 w-4 shrink-0 text-brand" />
         <select
           :value="selectedYear"
           :class="selectClass"
@@ -180,5 +198,5 @@ const selectClass =
         {{ day.getDate() }}
       </button>
     </div>
-  </section>
+  </CollapsibleSection>
 </template>
