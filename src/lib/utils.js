@@ -34,11 +34,134 @@ export function isPlanTask(task) {
   return normalizeTaskKind(task?.kind) === TASK_KIND.plan
 }
 
+/** 每日格 06:00–隔日 05:59，共 1440 分鐘 */
+export const DAY_VIEW_MINUTES = 24 * 60
+
 /** 佔用幾個連續時段（至少 1） */
 export function taskDuration(task) {
   const d = Number(task?.duration)
   if (!Number.isFinite(d) || d < 1) return 1
   return Math.min(Math.floor(d), TIME_SLOTS.length)
+}
+
+/** 解析本地時間字串 YYYY-MM-DDTHH:mm 或 YYYY-MM-DDTHH:mm:ss（不含時區） */
+export function parseLocalDateTime(value) {
+  if (!value || typeof value !== 'string') return null
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/)
+  if (!m) return null
+  const [, y, mo, d, h, mi, s] = m
+  return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s || 0), 0)
+}
+
+export function formatLocalDateTime(date, withSeconds = false) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return ''
+  const base = `${toDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return withSeconds ? `${base}:${pad(date.getSeconds())}` : base
+}
+
+/** 06:00 前歸前一日欄（週曆一欄 = 當日 06:00 至隔日 05:59） */
+export function calendarDateKeyFromMoment(date) {
+  const d = new Date(date)
+  if (d.getHours() < 6) {
+    d.setDate(d.getDate() - 1)
+  }
+  d.setHours(0, 0, 0, 0)
+  return toDateKey(d)
+}
+
+export function dayViewStart(dateKey) {
+  const d = parseDateKey(dateKey)
+  d.setHours(6, 0, 0, 0)
+  return d
+}
+
+export function taskStartMoment(task) {
+  if (task?.startAt) {
+    const parsed = parseLocalDateTime(task.startAt)
+    if (parsed) return parsed
+  }
+  if (task?.date && task?.timeSlot) {
+    const d = parseDateKey(task.date)
+    const [h] = task.timeSlot.split(':').map(Number)
+    d.setHours(h, 0, 0, 0)
+    return d
+  }
+  return null
+}
+
+export function taskEndMoment(task) {
+  if (task?.endAt) {
+    const parsed = parseLocalDateTime(task.endAt)
+    if (parsed) return parsed
+  }
+  const start = taskStartMoment(task)
+  if (!start) return null
+  const hours = clampDuration(task.timeSlot, taskDuration(task))
+  const end = new Date(start)
+  end.setHours(end.getHours() + hours, 0, 0, 0)
+  return end
+}
+
+/** 項目在指定日期欄上的分鐘區間（相對該欄 06:00） */
+export function taskTimelineOnDate(task, dateKey) {
+  const start = taskStartMoment(task)
+  const end = taskEndMoment(task)
+  if (!start || !end || end <= start) return null
+
+  const dayStart = dayViewStart(dateKey)
+  const dayEnd = addDays(dayStart, 1)
+
+  if (end <= dayStart || start >= dayEnd) return null
+
+  const clipStart = start > dayStart ? start : dayStart
+  const clipEnd = end < dayEnd ? end : dayEnd
+  const startMin = (clipStart - dayStart) / 60000
+  const endMin = (clipEnd - dayStart) / 60000
+  if (endMin <= startMin) return null
+  return { startMin, endMin }
+}
+
+export function taskColumnDate(task) {
+  const start = taskStartMoment(task)
+  if (start) return calendarDateKeyFromMoment(start)
+  return task?.date || ''
+}
+
+export function buildStartAtFromSlot(date, timeSlot) {
+  const d = parseDateKey(date)
+  const [h] = timeSlot.split(':').map(Number)
+  d.setHours(h, 0, 0, 0)
+  return formatLocalDateTime(d, true)
+}
+
+export function buildEndAtFromSlot(date, timeSlot, duration) {
+  const start = parseLocalDateTime(buildStartAtFromSlot(date, timeSlot))
+  const end = new Date(start)
+  end.setHours(end.getHours() + clampDuration(timeSlot, duration), 0, 0, 0)
+  return formatLocalDateTime(end, true)
+}
+
+export function buildRangeFromClock(date, startTime, endTime) {
+  const [sh, sm = 0, ss = 0] = String(startTime || '09:00:00').split(':').map(Number)
+  const [eh, em = 0, es = 0] = String(endTime || '10:00:00').split(':').map(Number)
+  const start = parseDateKey(date)
+  start.setHours(sh, sm, ss, 0)
+  const end = parseDateKey(date)
+  end.setHours(eh, em, es, 0)
+  if (end <= start) end.setDate(end.getDate() + 1)
+  return {
+    startAt: formatLocalDateTime(start, true),
+    endAt: formatLocalDateTime(end, true)
+  }
+}
+
+function durationHoursFromMoments(start, end) {
+  const ms = end - start
+  return Math.max(1, Math.ceil(ms / 3600000))
+}
+
+function slotFromMoment(date) {
+  return `${pad(date.getHours())}:00`
 }
 
 export function slotIndex(slot) {
@@ -73,32 +196,47 @@ export function taskEndLabel(task) {
 }
 
 export function formatTimeRange(task) {
-  const start = task?.timeSlot || ''
-  const d = clampDuration(start, taskDuration(task))
-  if (d <= 1) return start
-  return `${start}–${taskEndLabel(task)}`
+  const start = taskStartMoment(task)
+  const end = taskEndMoment(task)
+  if (start && end) {
+    const sh = pad(start.getHours())
+    const sm = pad(start.getMinutes())
+    const ss = pad(start.getSeconds())
+    const eh = pad(end.getHours())
+    const em = pad(end.getMinutes())
+    const es = pad(end.getSeconds())
+    const showSec = start.getSeconds() !== 0 || end.getSeconds() !== 0
+    const s = showSec ? `${sh}:${sm}:${ss}` : `${sh}:${sm}`
+    const e = showSec ? `${eh}:${em}:${es}` : `${eh}:${em}`
+    if (s === e) return s
+    return `${s}–${e}`
+  }
+  const slot = task?.timeSlot || ''
+  const d = clampDuration(slot, taskDuration(task))
+  if (d <= 1) return slot
+  return `${slot}–${taskEndLabel(task)}`
 }
 
 export function taskCoversSlot(task, dateKey, timeSlot) {
-  if (!task || task.date !== dateKey) return false
-  const i = slotIndex(task.timeSlot)
+  const range = taskTimelineOnDate(task, dateKey)
+  if (!range) return false
   const j = slotIndex(timeSlot)
-  if (i < 0 || j < 0) return false
-  const d = clampDuration(task.timeSlot, taskDuration(task))
-  return j >= i && j < i + d
+  if (j < 0) return false
+  const slotStart = j * 60
+  const slotEnd = slotStart + 60
+  return range.startMin < slotEnd && range.endMin > slotStart
 }
 
 /**
  * 同一天重疊項目並排分欄（Google 日曆風格）
  * @returns {Map<string, { lane: number, lanes: number }>}
  */
-export function layoutDayOverlaps(tasks) {
+export function layoutDayOverlaps(tasks, dateKey) {
   const items = tasks
     .map((t) => {
-      const start = slotIndex(t.timeSlot)
-      if (start < 0) return null
-      const dur = clampDuration(t.timeSlot, taskDuration(t))
-      return { id: t.id, start, end: start + dur }
+      const range = taskTimelineOnDate(t, dateKey)
+      if (!range) return null
+      return { id: t.id, start: range.startMin, end: range.endMin }
     })
     .filter(Boolean)
     .sort((a, b) => a.start - b.start || b.end - a.end)
@@ -244,7 +382,8 @@ export function emptyStore() {
     tasks: [],
     todos: [],
     keyPlans: [],
-    reviews: {}
+    reviews: {},
+    timerCategories: []
   }
 }
 
@@ -256,7 +395,8 @@ export function normalizeStore(raw) {
       tasks: raw.map(normalizeTask),
       todos: [],
       keyPlans: [],
-      reviews: {}
+      reviews: {},
+      timerCategories: []
     }
   }
   return {
@@ -264,19 +404,95 @@ export function normalizeStore(raw) {
     tasks: (Array.isArray(raw?.tasks) ? raw.tasks : []).map(normalizeTask),
     todos: Array.isArray(raw?.todos) ? raw.todos : [],
     keyPlans: Array.isArray(raw?.keyPlans) ? raw.keyPlans : [],
-    reviews: raw?.reviews && typeof raw.reviews === 'object' ? raw.reviews : {}
+    reviews: raw?.reviews && typeof raw.reviews === 'object' ? raw.reviews : {},
+    timerCategories: (Array.isArray(raw?.timerCategories) ? raw.timerCategories : [])
+      .map(normalizeTimerCategory)
+      .filter(Boolean)
+  }
+}
+
+export function normalizeHexColor(value) {
+  const s = String(value || '').trim()
+  if (/^#[0-9A-Fa-f]{6}$/.test(s)) return s
+  if (/^[0-9A-Fa-f]{6}$/.test(s)) return `#${s}`
+  return null
+}
+
+export function normalizeTimerCategory(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const name = String(raw.name || '').trim()
+  const color = normalizeHexColor(raw.color)
+  if (!name || !color) return null
+  return {
+    id: raw.id || createId(),
+    name,
+    color
+  }
+}
+
+export function resolveTaskColor(task, categories = []) {
+  const direct = normalizeHexColor(task?.color)
+  if (direct) return direct
+  const cat = categories.find((c) => c.id === task?.categoryId)
+  return cat?.color || null
+}
+
+/** 日程格子 inline 樣式（依分類色） */
+export function scheduleStyleFromColor(color) {
+  const hex = normalizeHexColor(color)
+  if (!hex) return undefined
+  return {
+    backgroundColor: `color-mix(in srgb, ${hex} 38%, white)`,
+    borderColor: `color-mix(in srgb, ${hex} 65%, white)`
   }
 }
 
 export function normalizeTask(task) {
   if (!task || typeof task !== 'object') return task
   const kind = normalizeTaskKind(task.kind)
-  const timeSlot = task.timeSlot || TIME_SLOTS[0]
+
+  let startAt = task.startAt
+  let endAt = task.endAt
+  let date = task.date
+  let timeSlot = task.timeSlot
+  let duration = task.duration
+
+  if (startAt && endAt) {
+    const start = parseLocalDateTime(startAt)
+    let end = parseLocalDateTime(endAt)
+    if (start && end) {
+      if (end <= start) {
+        end = new Date(start.getTime() + 1000)
+      }
+      startAt = formatLocalDateTime(start, true)
+      endAt = formatLocalDateTime(end, true)
+      date = calendarDateKeyFromMoment(start)
+      timeSlot = slotFromMoment(start)
+      duration = clampDuration(timeSlot, durationHoursFromMoments(start, end))
+    } else {
+      startAt = undefined
+      endAt = undefined
+    }
+  }
+
+  if (!startAt || !endAt) {
+    timeSlot = timeSlot || TIME_SLOTS[0]
+    date = date || toDateKey(new Date())
+    duration = clampDuration(timeSlot, taskDuration({ ...task, duration }))
+    startAt = buildStartAtFromSlot(date, timeSlot)
+    endAt = buildEndAtFromSlot(date, timeSlot, duration)
+  }
+
   return {
     ...task,
     kind,
+    date,
     timeSlot,
-    duration: clampDuration(timeSlot, taskDuration(task)),
+    duration,
+    startAt,
+    endAt,
+    ...(task.categoryId ? { categoryId: task.categoryId } : {}),
+    ...(normalizeHexColor(task.color) ? { color: normalizeHexColor(task.color) } : {}),
     status: kind === TASK_KIND.schedule ? undefined : task.status || STATUS.todo
   }
 }

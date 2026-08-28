@@ -2,24 +2,30 @@
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   addDays,
-  clampDuration,
   completionRate,
   formatDisplayDate,
   formatRate,
   formatTimeRange,
   isPlanTask,
   layoutDayOverlaps,
-  maxDurationFrom,
+  resolveTaskColor,
+  scheduleStyleFromColor,
   SELECT_COLOR,
   selectBgStyle,
   selectBorderBgStyle,
-  slotIndex,
   STATUS,
   TASK_KIND,
   TASK_KIND_META,
+  taskColumnDate,
   taskDuration,
+  taskEndMoment,
+  taskStartMoment,
+  taskTimelineOnDate,
   TIME_SLOTS,
   toDateKey,
+  buildRangeFromClock,
+  DAY_VIEW_MINUTES,
+  pad,
   weekDates,
   weekdayLabel
 } from '../lib/utils'
@@ -37,8 +43,13 @@ const days = computed(() => weekDates(app.weekAnchor.value))
  */
 const dialog = ref(null)
 const titleInput = ref(null)
-/** 'all' | 'plan' | 'schedule' */
-const viewFilter = ref('all')
+/** 'all' | 'plan' | 'schedule' — 與 app.weekViewFilter 同步 */
+const viewFilter = computed({
+  get: () => app.weekViewFilter.value,
+  set: (v) => {
+    app.weekViewFilter.value = v
+  }
+})
 /** 目前拖曳經過的時段：`${dateKey}|${timeSlot}` */
 const dropTarget = ref(null)
 /** 拖曳中隱藏既有項目，讓落點格可接收事件 */
@@ -101,64 +112,84 @@ function dayRate(date) {
 
 const weekDateKeys = computed(() => days.value.map((d) => toDateKey(d)))
 
-/** 本週要畫在格子上的項目（跨時段 + 重疊並排） */
-const weekBlocks = computed(() => {
-  const keySet = new Set(weekDateKeys.value)
-  let list = app.store.tasks.filter((t) => keySet.has(t.date))
-  if (viewFilter.value === 'plan') list = list.filter(isPlanTask)
-  else if (viewFilter.value === 'schedule') list = list.filter((t) => !isPlanTask(t))
+/** 本週各日欄上的項目（分鐘級定位 + 重疊並排） */
+const dayBlockLayers = computed(() => {
+  return weekDateKeys.value.map((dateKey, dayIdx) => {
+    let list = app.store.tasks.filter((t) => taskColumnDate(t) === dateKey)
+    if (viewFilter.value === 'plan') list = list.filter(isPlanTask)
+    else if (viewFilter.value === 'schedule') list = list.filter((t) => !isPlanTask(t))
 
-  const byDay = new Map()
-  for (const task of list) {
-    if (!byDay.has(task.date)) byDay.set(task.date, [])
-    byDay.get(task.date).push(task)
-  }
+    const layout = layoutDayOverlaps(list, dateKey)
+    const gap = 3
 
-  const layouts = new Map()
-  for (const [date, dayTasks] of byDay) {
-    layouts.set(date, layoutDayOverlaps(dayTasks))
-  }
-
-  return list
-    .map((task) => {
-      const dayIdx = weekDateKeys.value.indexOf(task.date)
-      const startIdx = slotIndex(task.timeSlot)
-      if (dayIdx < 0 || startIdx < 0) return null
-      const duration = clampDuration(task.timeSlot, taskDuration(task))
-      const layout = layouts.get(task.date)?.get(task.id) || { lane: 0, lanes: 1 }
-      const { lane, lanes } = layout
-      const gap = 3
-      return {
-        task,
-        style: {
-          gridColumn: String(dayIdx + 2),
-          gridRow: `${startIdx + 1} / span ${duration}`,
-          width: `calc(${100 / lanes}% - ${gap}px)`,
-          marginLeft: `calc(${(100 / lanes) * lane}% + ${gap / 2}px)`,
-          justifySelf: 'start',
-          alignSelf: 'stretch'
+    const blocks = list
+      .map((task) => {
+        const range = taskTimelineOnDate(task, dateKey)
+        if (!range) return null
+        const { lane, lanes } = layout.get(task.id) || { lane: 0, lanes: 1 }
+        const topPct = (range.startMin / DAY_VIEW_MINUTES) * 100
+        const heightPct = ((range.endMin - range.startMin) / DAY_VIEW_MINUTES) * 100
+        if (heightPct <= 0) return null
+        return {
+          task,
+          compact: heightPct < 1.2,
+          style: {
+            top: `${topPct}%`,
+            height: `${heightPct}%`,
+            width: `calc(${100 / lanes}% - ${gap}px)`,
+            left: `calc(${(100 / lanes) * lane}% + ${gap / 2}px)`
+          }
         }
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => {
-      if (a.task.date !== b.task.date) return a.task.date.localeCompare(b.task.date)
-      return slotIndex(a.task.timeSlot) - slotIndex(b.task.timeSlot)
-    })
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const ra = taskTimelineOnDate(a.task, dateKey)
+        const rb = taskTimelineOnDate(b.task, dateKey)
+        return (ra?.startMin ?? 0) - (rb?.startMin ?? 0)
+      })
+
+    return { dayIdx, dateKey, blocks }
+  })
 })
 
-function durationOptions(startSlot) {
-  const max = maxDurationFrom(startSlot)
-  return Array.from({ length: max }, (_, i) => {
-    const h = i + 1
-    return {
-      value: h,
-      label:
-        h <= 1
-          ? '1 小時'
-          : `${h} 小時（${formatTimeRange({ timeSlot: startSlot, duration: h })}）`
-    }
-  })
+function clockFromTask(task, which) {
+  const m = which === 'start' ? taskStartMoment(task) : taskEndMoment(task)
+  if (!m) return '09:00:00'
+  return `${pad(m.getHours())}:${pad(m.getMinutes())}:${pad(m.getSeconds())}`
+}
+
+function defaultEndTime(startTime) {
+  const [h = 9, m = 0, s = 0] = String(startTime || '09:00:00').split(':').map(Number)
+  const endH = (h + 1) % 24
+  return `${pad(endH)}:${pad(m)}:${pad(s)}`
+}
+
+function scheduleChipClass(task) {
+  if (isPlanTask(task)) return 'task-chip-plan'
+  if (resolveTaskColor(task, app.store.timerCategories)) return 'task-chip-custom'
+  return 'task-chip-schedule'
+}
+
+function scheduleChipStyle(task) {
+  if (isPlanTask(task)) return undefined
+  return scheduleStyleFromColor(resolveTaskColor(task, app.store.timerCategories))
+}
+
+function startTimeFromSlot(timeSlot) {
+  return `${timeSlot.slice(0, 2)}:00:00`
+}
+
+function showTimeRange(task) {
+  const s = taskStartMoment(task)
+  const e = taskEndMoment(task)
+  if (!s || !e) return taskDuration(task) > 1
+  return (
+    taskDuration(task) > 1 ||
+    s.getMinutes() !== 0 ||
+    e.getMinutes() !== 0 ||
+    s.getSeconds() !== 0 ||
+    e.getSeconds() !== 0
+  )
 }
 
 function openCell(date, timeSlot) {
@@ -172,10 +203,12 @@ function openCell(date, timeSlot) {
 }
 
 function openKindPick(payload) {
+  const startTime = payload.timeSlot ? startTimeFromSlot(payload.timeSlot) : '09:00:00'
   dialog.value = {
     mode: 'kind-pick',
     kind: TASK_KIND.plan,
-    duration: 1,
+    startTime,
+    endTime: defaultEndTime(startTime),
     ...payload
   }
 }
@@ -198,20 +231,23 @@ function chooseKind(kind) {
 function confirmDropTodo() {
   if (!dialog.value || dialog.value.mode !== 'kind-pick') return
   if (dialog.value.purpose !== 'drop-todo' || !dialog.value.todoId) return
-  const { date, timeSlot, todoId, kind, duration } = dialog.value
-  app.placeTodo(todoId, date, timeSlot, kind || TASK_KIND.plan, duration || 1)
+  const { date, timeSlot, todoId, kind, startTime, endTime } = dialog.value
+  const range = buildRangeFromClock(date, startTime, endTime)
+  app.placeTodo(todoId, date, timeSlot, kind || TASK_KIND.plan, range.startAt, range.endAt)
   closeDialog()
 }
 
 function openAddForm(date, timeSlot, kind = TASK_KIND.plan) {
+  const startTime = startTimeFromSlot(timeSlot)
   dialog.value = {
     mode: 'form',
     date,
     timeSlot,
+    startTime,
+    endTime: defaultEndTime(startTime),
     title: '',
     status: STATUS.todo,
     kind,
-    duration: 1,
     id: null
   }
   nextTick(() => titleInput.value?.focus())
@@ -222,10 +258,11 @@ function openEditForm(task) {
     mode: 'form',
     date: task.date,
     timeSlot: task.timeSlot,
+    startTime: clockFromTask(task, 'start'),
+    endTime: clockFromTask(task, 'end'),
     title: task.title || '',
     status: task.status || STATUS.todo,
     kind: isPlanTask(task) ? TASK_KIND.plan : TASK_KIND.schedule,
-    duration: clampDuration(task.timeSlot, taskDuration(task)),
     id: task.id
   }
   nextTick(() => titleInput.value?.focus())
@@ -242,13 +279,14 @@ function closeDialog() {
 
 function saveEdit() {
   if (!dialog.value || dialog.value.mode !== 'form') return
-  const { date, timeSlot, title, status, kind, duration, id } = dialog.value
+  const { date, timeSlot, title, status, kind, id, startTime, endTime } = dialog.value
   if (!title.trim()) {
     if (id) {
       app.removeTask(id)
       app.persistNow('Delete empty task')
     }
   } else {
+    const range = buildRangeFromClock(date, startTime, endTime)
     app.upsertTask({
       id: id || undefined,
       date,
@@ -256,7 +294,8 @@ function saveEdit() {
       title: title.trim(),
       status,
       kind,
-      duration
+      startAt: range.startAt,
+      endAt: range.endAt
     })
     app.persistNow(`Upsert task: ${title.trim()}`)
   }
@@ -501,33 +540,41 @@ onUnmounted(() => {
           </template>
 
           <div
-            v-for="block in weekBlocks"
-            :key="block.task.id"
-            class="task-span z-[5] m-0.5 flex min-h-0 flex-col gap-0.5"
-            :style="block.style"
+            v-for="layer in dayBlockLayers"
+            :key="`layer-${layer.dateKey}`"
+            class="day-block-layer pointer-events-none z-[5]"
+            :style="{ gridColumn: layer.dayIdx + 2, gridRow: '1 / -1' }"
           >
             <div
-              class="task-chip relative h-full min-h-8 flex-1 text-ink"
-              :class="isPlanTask(block.task) ? 'task-chip-plan' : 'task-chip-schedule'"
-              draggable="true"
-              :title="`${kindLabel(block.task)} · ${block.task.title} · ${formatTimeRange(block.task)}`"
-              @dragstart="onDragStart($event, block.task)"
-              @dragend="onDragEnd"
-              @click.stop="openEditForm(block.task)"
+              v-for="block in layer.blocks"
+              :key="block.task.id"
+              class="task-span absolute flex min-h-0 flex-col gap-0.5"
+              :style="block.style"
             >
-              <span class="flex min-w-0 flex-1 flex-col justify-center truncate px-1 text-left">
-                <span class="truncate font-medium text-ink">{{ block.task.title }}</span>
-                <span
-                  v-if="taskDuration(block.task) > 1"
-                  class="truncate text-[10px] font-medium text-ink/60"
-                >{{ formatTimeRange(block.task) }}</span>
-              </span>
-              <StatusIcon
-                v-if="isPlanTask(block.task)"
-                :status="block.task.status"
-                size="sm"
-                @click="app.cycleTaskStatus(block.task.id)"
-              />
+              <div
+                class="task-chip relative h-full min-h-0 flex-1 text-ink"
+                :class="scheduleChipClass(block.task)"
+                :style="scheduleChipStyle(block.task)"
+                draggable="true"
+                :title="`${kindLabel(block.task)} · ${block.task.title} · ${formatTimeRange(block.task)}`"
+                @dragstart="onDragStart($event, block.task)"
+                @dragend="onDragEnd"
+                @click.stop="openEditForm(block.task)"
+              >
+                <span class="flex min-w-0 flex-1 flex-col justify-center truncate px-1 text-left">
+                  <span class="truncate font-medium text-ink">{{ block.task.title }}</span>
+                  <span
+                    v-if="!block.compact && showTimeRange(block.task)"
+                    class="truncate text-[10px] font-medium text-ink/60"
+                  >{{ formatTimeRange(block.task) }}</span>
+                </span>
+                <StatusIcon
+                  v-if="isPlanTask(block.task)"
+                  :status="block.task.status"
+                  size="sm"
+                  @click="app.cycleTaskStatus(block.task.id)"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -651,19 +698,23 @@ onUnmounted(() => {
               </p>
             </div>
             <label class="block">
-              <span class="mb-1 block text-sm font-medium text-ink">時長</span>
-              <select
-                v-model.number="dialog.duration"
+              <span class="mb-1 block text-sm font-medium text-ink">開始時間</span>
+              <input
+                v-model="dialog.startTime"
+                type="time"
+                step="1"
                 class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
-              >
-                <option
-                  v-for="opt in durationOptions(dialog.timeSlot)"
-                  :key="opt.value"
-                  :value="opt.value"
-                >
-                  {{ opt.label }}
-                </option>
-              </select>
+              />
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-sm font-medium text-ink">結束時間</span>
+              <input
+                v-model="dialog.endTime"
+                type="time"
+                step="1"
+                class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
+              />
+              <p class="mt-1 text-xs text-mute">若結束時間早於開始，會視為跨到隔日。</p>
             </label>
           </div>
           <div class="flex gap-2 border-t border-line px-4 py-3">
@@ -727,7 +778,28 @@ onUnmounted(() => {
               : `新增${TASK_KIND_META[dialog.kind]?.label || '項目'}`
           }}
         </h3>
-        <p class="mt-1 text-xs font-medium text-ink/70">{{ dialog.date }} · {{ dialog.timeSlot }}</p>
+        <p class="mt-1 text-xs font-medium text-ink/70">{{ dialog.date }}</p>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-sm font-medium">開始時間</span>
+          <input
+            v-model="dialog.startTime"
+            type="time"
+            step="1"
+            class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
+          />
+        </label>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-sm font-medium">結束時間</span>
+          <input
+            v-model="dialog.endTime"
+            type="time"
+            step="1"
+            class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
+          />
+          <p class="mt-1 text-xs text-mute">若結束時間早於開始，會視為跨到隔日。</p>
+        </label>
 
         <div class="mt-4">
           <p class="mb-2 text-sm font-medium">類型</p>
@@ -750,22 +822,6 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-
-        <label class="mt-4 block">
-          <span class="mb-1 block text-sm font-medium">時長</span>
-          <select
-            v-model.number="dialog.duration"
-            class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
-          >
-            <option
-              v-for="opt in durationOptions(dialog.timeSlot)"
-              :key="opt.value"
-              :value="opt.value"
-            >
-              {{ opt.label }}
-            </option>
-          </select>
-        </label>
 
         <label class="mt-4 block">
           <span class="mb-1 block text-sm font-medium">

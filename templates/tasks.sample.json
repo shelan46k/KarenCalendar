@@ -14,6 +14,14 @@
       "date": "2026-01-01",
       "timeSlot": "10:00",
       "status": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "title": "客戶視訊",
+      "kind": "schedule",
+      "startAt": "2026-01-01T09:17:00",
+      "endAt": "2026-01-01T10:45:00",
+      "source": "ios-shortcut"
     }
   ],
   "keyPlans": [

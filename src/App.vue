@@ -1,14 +1,23 @@
 <script setup>
 import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useCalendarApp } from './composables/useCalendarApp'
+import { useTaskTimer } from './composables/useTaskTimer'
+import {
+  applyTimerAction,
+  readTimerActionFromUrl,
+  takePendingTimerAction
+} from './lib/deepLink'
 import SetupModal from './components/SetupModal.vue'
 import LeftDashboard from './components/LeftDashboard.vue'
 import WeeklySchedule from './components/WeeklySchedule.vue'
+import TaskTimer from './components/TaskTimer.vue'
 
 const POLL_MS = 60_000
 
 const app = useCalendarApp()
+const timer = useTaskTimer()
 provide('calendarApp', app)
+provide('taskTimer', timer)
 
 const bootError = ref('')
 const booting = ref(!!app.config.value)
@@ -44,9 +53,28 @@ const pollLabel = computed(() => {
   return '自動更新'
 })
 
+async function runTimerDeepLink(action) {
+  if (!action) return
+  await applyTimerAction(action, {
+    timer,
+    isLoggedIn: !!app.config.value
+  })
+}
+
+async function handleTimerDeepLinks() {
+  const fromUrl = readTimerActionFromUrl()
+  if (fromUrl) {
+    await runTimerDeepLink(fromUrl)
+    return
+  }
+  const pending = takePendingTimerAction()
+  if (pending) await runTimerDeepLink(pending)
+}
+
 onMounted(async () => {
   if (!app.config.value) {
     booting.value = false
+    await handleTimerDeepLinks()
     return
   }
   try {
@@ -57,6 +85,7 @@ onMounted(async () => {
   } finally {
     booting.value = false
   }
+  await handleTimerDeepLinks()
   startPolling()
   document.addEventListener('visibilitychange', onVisibilityChange)
 })
@@ -116,8 +145,9 @@ function stopPolling() {
 function onVisibilityChange() {
   pageVisible.value = document.visibilityState === 'visible'
   nowTick.value = Date.now()
-  if (pageVisible.value && app.config.value) {
-    softPoll()
+  if (pageVisible.value) {
+    void handleTimerDeepLinks()
+    if (app.config.value) softPoll()
   }
 }
 
@@ -146,6 +176,7 @@ async function handleLogin(form) {
   try {
     await app.login(form)
     startPolling()
+    await handleTimerDeepLinks()
   } catch (err) {
     bootError.value = err.message || String(err)
   }
@@ -237,14 +268,40 @@ async function handleRefresh() {
       >
         {{ app.syncError.value }}
       </div>
+
+      <div
+        v-if="app.config.value && timer.isRunning.value"
+        class="border-t border-brand/25 bg-brand-soft/70 px-4 py-2"
+      >
+        <div class="mx-auto flex max-w-[1600px] items-center justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-xs font-semibold text-brand-deep">任務進行中</p>
+            <p class="truncate text-sm font-bold tabular-nums text-ink">
+              {{ timer.elapsedLabel.value }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="shrink-0 rounded-xl border border-brand/40 bg-white px-3 py-1.5 text-sm font-semibold text-brand-deep hover:bg-white/80"
+            @click="timer.openEndDialog()"
+          >
+            結束 🔚
+          </button>
+        </div>
+      </div>
     </header>
 
     <main
       v-if="app.config.value && !booting"
-      class="mx-auto grid max-w-[1600px] gap-4 p-3 md:p-4 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]"
+      class="mx-auto max-w-[1600px] p-3 md:p-4"
     >
-      <LeftDashboard class="order-2 lg:order-1" />
-      <WeeklySchedule class="order-1 lg:order-2" />
+      <TaskTimer class="mb-3 lg:hidden" />
+      <div
+        class="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]"
+      >
+        <LeftDashboard class="order-2 lg:order-1" />
+        <WeeklySchedule class="order-1 lg:order-2" />
+      </div>
     </main>
 
     <div

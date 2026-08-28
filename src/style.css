@@ -92,8 +92,31 @@ body {
   background-color: #fcecef;
 }
 
+.task-chip-custom {
+  /* 顏色由 inline style 提供 */
+}
+
+.day-block-layer {
+  position: relative;
+  min-height: 0;
+}
+
+.day-block-layer .task-span {
+  pointer-events: none;
+}
+
 .task-span {
   pointer-events: none;
+}
+
+.day-block-layer .task-span .task-chip {
+  pointer-events: auto;
+  height: 100%;
+  min-height: 0;
+  align-items: center;
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+  overflow: hidden;
 }
 
 .task-span .task-chip {

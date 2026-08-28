@@ -8,6 +8,8 @@ import MiniCalendar from './MiniCalendar.vue'
 import StatList from './StatList.vue'
 import StatusIcon from './StatusIcon.vue'
 import TodoList from './TodoList.vue'
+import TaskTimer from './TaskTimer.vue'
+import DayScheduleList from './DayScheduleList.vue'
 
 const app = inject('calendarApp')
 
@@ -125,6 +127,7 @@ function onReflectionsInput(e) {
 
 <template>
   <aside class="flex flex-col gap-3">
+    <TaskTimer class="hidden lg:block" />
     <MiniCalendar />
     <TodoList />
     <AgendaList />
@@ -240,6 +243,8 @@ function onReflectionsInput(e) {
         </label>
       </div>
     </CollapsibleSection>
+
+    <DayScheduleList />
 
     <div
       v-if="planUi === 'form'"
