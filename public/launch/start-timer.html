@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="開始計時" />
+    <meta name="theme-color" content="#BBAEE3" />
+    <link rel="apple-touch-icon" href="../icons/icon-192.png" />
+    <title>開始計時 · Karen</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        font-family: 'Noto Sans TC', system-ui, sans-serif;
+        background: #f1eef7;
+        color: #2d2640;
+        text-align: center;
+        line-height: 1.6;
+      }
+      a {
+        color: #7c6bb3;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="msg">正在開啟 Karen…</p>
+    <script>
+      ;(function () {
+        var action = 'start-timer'
+        try {
+          sessionStorage.setItem('karen-pending-action', action)
+        } catch (e) {}
+
+        var standalone =
+          window.navigator.standalone === true ||
+          window.matchMedia('(display-mode: standalone)').matches
+
+        if (standalone) {
+          location.replace('../')
+          return
+        }
+
+        document.getElementById('msg').innerHTML =
+          '請用 Safari 點 <strong>分享</strong> → <strong>加入主畫面</strong>，之後從主畫面開啟即為全螢幕 App（不是 Safari 分頁）。<br><br><a href="../">或先開啟 Karen</a>'
+        setTimeout(function () {
+          location.replace('../')
+        }, 1200)
+      })()
+    </script>
+  </body>
+</html>
