@@ -8,6 +8,9 @@ const todoUi = ref(null)
 const activeTodo = ref(null)
 const todoForm = reactive({ title: '' })
 const titleInput = ref(null)
+const draggingTodoIndex = ref(null)
+const dropTargetIndex = ref(null)
+let suppressTodoClick = false
 
 const summaryText = computed(() => {
   const n = app.todos.value.length
@@ -28,6 +31,7 @@ function openAddTodo() {
 }
 
 function openTodoEdit(todo) {
+  if (suppressTodoClick) return
   activeTodo.value = todo
   todoForm.title = todo.title
   todoUi.value = 'form'
@@ -54,46 +58,106 @@ function saveTodoForm() {
   closeTodoUi()
 }
 
-function onDragStart(event, todo) {
+function clearTodoDragState() {
+  draggingTodoIndex.value = null
+  dropTargetIndex.value = null
+}
+
+function onDragStart(event, todo, index) {
+  draggingTodoIndex.value = index
+  dropTargetIndex.value = index
   event.dataTransfer.setData('text/todo-id', todo.id)
   event.dataTransfer.effectAllowed = 'move'
 }
 
-function allowDrop(event) {
-  event.preventDefault()
+function onDragEnd() {
+  suppressTodoClick = true
+  setTimeout(() => {
+    suppressTodoClick = false
+  }, 0)
+  clearTodoDragState()
 }
 
-function onDrop(event) {
+function onTodoDragOver(event, index) {
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+  if (draggingTodoIndex.value == null) return
+  dropTargetIndex.value = index
+}
+
+function onTodoDrop(event, index) {
   event.preventDefault()
   const taskId = event.dataTransfer.getData('text/task-id')
-  if (!taskId) return
-  app.placeTaskAsTodo(taskId)
+  if (taskId) {
+    app.placeTaskAsTodo(taskId)
+    clearTodoDragState()
+    return
+  }
+  event.stopPropagation()
+  const from = draggingTodoIndex.value
+  if (from == null || from === index) {
+    clearTodoDragState()
+    return
+  }
+  app.reorderTodo(from, index)
+  clearTodoDragState()
+}
+
+function onListDragOver(event) {
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+}
+
+function onListDrop(event) {
+  event.preventDefault()
+  event.stopPropagation()
+  const taskId = event.dataTransfer.getData('text/task-id')
+  if (taskId) {
+    app.placeTaskAsTodo(taskId)
+    return
+  }
+  const from = draggingTodoIndex.value
+  const lastIndex = app.todos.value.length - 1
+  if (from != null && from !== lastIndex) {
+    app.reorderTodo(from, lastIndex)
+  }
+  clearTodoDragState()
 }
 </script>
 
 <template>
   <div
     class="rounded-2xl"
-    @dragover="allowDrop"
-    @drop="onDrop"
+    @dragover="onListDragOver"
+    @drop="onListDrop"
   >
   <CollapsibleSection id="todos" title="待辦事項" icon="todo" :default-open="true">
     <template #summary>{{ summaryText }}</template>
 
-    <p class="mb-3 text-[11px] text-mute">可與每日計劃互相拖曳</p>
+    <p class="mb-3 text-[11px] text-mute">拖曳可調整順序，也可與每日計劃互相拖曳</p>
 
     <ul v-if="app.todos.value.length" class="mb-3 space-y-2">
       <li
         v-for="(todo, index) in app.todos.value"
         :key="todo.id"
         class="flex items-center gap-2"
+        @dragover="onTodoDragOver($event, index)"
+        @drop="onTodoDrop($event, index)"
       >
         <button
           type="button"
-          class="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-xl px-1 py-1.5 text-left transition hover:bg-soft active:cursor-grabbing"
+          class="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-xl border px-1 py-1.5 text-left transition hover:bg-soft active:cursor-grabbing"
+          :class="
+            dropTargetIndex === index && draggingTodoIndex !== null && draggingTodoIndex !== index
+              ? 'border-brand bg-brand-soft/50'
+              : draggingTodoIndex === index
+                ? 'border-brand/40 bg-brand-soft/30 opacity-60'
+                : 'border-transparent'
+          "
           :title="todo.title"
           draggable="true"
-          @dragstart="onDragStart($event, todo)"
+          @dragstart="onDragStart($event, todo, index)"
+          @dragend="onDragEnd"
           @click="openTodoEdit(todo)"
         >
           <span class="w-5 shrink-0 text-xs text-mute">{{ index + 1 }}.</span>

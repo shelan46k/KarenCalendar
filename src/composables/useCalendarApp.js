@@ -379,6 +379,15 @@ export function useCalendarApp() {
     persistNow('Delete todo')
   }
 
+  function reorderTodo(fromIndex, toIndex) {
+    const list = store.todos
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex >= list.length) return
+    if (fromIndex === toIndex) return
+    const [item] = list.splice(fromIndex, 1)
+    list.splice(toIndex, 0, item)
+    persistNow('Reorder todos')
+  }
+
   /** 時段項目拖回待辦：建立待辦並移除原項目 */
   function placeTaskAsTodo(taskId) {
     const idx = store.tasks.findIndex((t) => t.id === taskId)
@@ -547,6 +556,7 @@ export function useCalendarApp() {
     addTodo,
     updateTodo,
     removeTodo,
+    reorderTodo,
     placeTodo,
     placeTaskAsTodo,
     updateKeyPlan,
