@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, nextTick, ref, watch } from 'vue'
 import { notificationPermission, notificationSupported } from '../lib/notifications'
-import { scheduleStyleFromColor } from '../lib/utils'
+import { composeTaskTitle, scheduleStyleFromColor } from '../lib/utils'
 import CollapsibleSection from './CollapsibleSection.vue'
 import SectionIcon from './SectionIcon.vue'
 
@@ -24,25 +24,35 @@ const showCategoryForm = ref(false)
 const newCatName = ref('')
 const newCatColor = ref('#F4A4B4')
 
-const showCustomTitle = ref(false)
+const selectedCatId = ref(null)
 const customTitle = ref('')
 const customTitleInput = ref(null)
+const endDialogError = ref('')
 const saving = ref(false)
 
 watch(
   () => timer.showEndDialog.value,
   (open) => {
     if (!open) {
-      showCustomTitle.value = false
+      selectedCatId.value = null
       customTitle.value = ''
+      endDialogError.value = ''
       return
     }
-    showCustomTitle.value = categories.value.length === 0
-    nextTick(() => {
-      if (showCustomTitle.value) customTitleInput.value?.focus()
-    })
+    nextTick(() => customTitleInput.value?.focus())
   }
 )
+
+function resolveEndTitle() {
+  const cat = categories.value.find((c) => c.id === selectedCatId.value)
+  return composeTaskTitle(cat?.name, customTitle.value)
+}
+
+function catChipStyle(cat) {
+  const base = scheduleStyleFromColor(cat.color) || {}
+  const selected = selectedCatId.value === cat.id
+  return selected ? { ...base, boxShadow: '0 0 0 2px color-mix(in srgb, #BBAEE3 55%, white)' } : base
+}
 
 async function saveSchedule(payload) {
   const range = timer.getFinishRange()
@@ -58,7 +68,8 @@ async function saveSchedule(payload) {
     timer.finalizeAfterSave()
     app.goToScheduleDate(range.startAt)
     customTitle.value = ''
-    showCustomTitle.value = false
+    selectedCatId.value = null
+    endDialogError.value = ''
   } catch (err) {
     app.syncError.value = err?.message || '儲存失敗，請稍後再試'
   } finally {
@@ -66,19 +77,26 @@ async function saveSchedule(payload) {
   }
 }
 
-function saveWithCategory(cat) {
-  if (saving.value) return
+function trySaveEnd() {
+  const title = resolveEndTitle()
+  if (!title) {
+    endDialogError.value = '請輸入或選擇內容'
+    return
+  }
+  const cat = categories.value.find((c) => c.id === selectedCatId.value)
   saveSchedule({
-    title: cat.name,
-    categoryId: cat.id,
-    color: cat.color
+    title,
+    categoryId: cat?.id,
+    color: cat?.color
   })
 }
 
-function saveWithCustomTitle() {
-  const trimmed = customTitle.value.trim()
-  if (!trimmed) return
-  saveSchedule({ title: trimmed })
+function onCategoryClick(cat) {
+  selectedCatId.value = cat.id
+  endDialogError.value = ''
+  if (!customTitle.value.trim()) {
+    trySaveEnd()
+  }
 }
 
 function addCategory() {
@@ -94,10 +112,6 @@ function addCategory() {
 function removeCategory(id) {
   if (!confirm('確定刪除此分類？已記錄的日程會保留原色。')) return
   app.removeTimerCategory(id)
-}
-
-function catChipStyle(color) {
-  return scheduleStyleFromColor(color) || {}
 }
 </script>
 
@@ -252,23 +266,17 @@ function catChipStyle(color) {
               :key="cat.id"
               type="button"
               class="rounded-xl border px-3 py-3 text-left text-sm font-semibold text-ink transition hover:brightness-[0.98] disabled:opacity-50"
-              :style="catChipStyle(cat.color)"
+              :class="selectedCatId === cat.id ? 'border-brand' : 'border-line'"
+              :style="catChipStyle(cat)"
               :disabled="saving"
-              @click="saveWithCategory(cat)"
+              @click="onCategoryClick(cat)"
             >
               {{ cat.name }}
             </button>
           </div>
 
-          <button
-            type="button"
-            class="mt-3 w-full rounded-xl border border-dashed border-line px-3 py-2.5 text-sm text-mute hover:bg-soft"
-            @click="showCustomTitle = !showCustomTitle"
-          >
-            {{ showCustomTitle ? '收起自訂輸入' : '其他（自訂文字）' }}
-          </button>
-
-          <div v-if="showCustomTitle || !categories.length" class="mt-3">
+          <label class="mt-4 block">
+            <span class="mb-1 block text-sm font-medium text-ink">補充說明（可選）</span>
             <input
               ref="customTitleInput"
               v-model="customTitle"
@@ -276,17 +284,26 @@ function catChipStyle(color) {
               class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
               placeholder="輸入這段時間做了什麼"
               :disabled="saving"
-              @keydown.enter.prevent="saveWithCustomTitle"
+              @input="endDialogError = ''"
+              @keydown.enter.prevent="trySaveEnd"
             />
-            <button
-              type="button"
-              class="mt-2 w-full rounded-xl bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-deep disabled:opacity-50"
-              :disabled="!customTitle.trim() || saving"
-              @click="saveWithCustomTitle"
-            >
-              {{ saving ? '儲存中…' : '完成並記錄' }}
-            </button>
-          </div>
+            <p class="mt-1 text-xs text-mute">點分類可快速儲存；有打字時請按下方完成。</p>
+          </label>
+
+          <p v-if="endDialogError" class="mt-2 text-sm text-status-todo">{{ endDialogError }}</p>
+
+          <p v-if="resolveEndTitle()" class="mt-2 rounded-xl bg-soft px-3 py-2 text-xs text-ink">
+            預覽：{{ resolveEndTitle() }}
+          </p>
+
+          <button
+            type="button"
+            class="mt-3 w-full rounded-xl bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-deep disabled:opacity-50"
+            :disabled="saving"
+            @click="trySaveEnd"
+          >
+            {{ saving ? '儲存中…' : '完成並記錄' }}
+          </button>
 
           <div class="mt-4 flex justify-end">
             <button

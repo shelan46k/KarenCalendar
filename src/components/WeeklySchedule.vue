@@ -8,6 +8,8 @@ import {
   formatTimeRange,
   isPlanTask,
   layoutDayOverlaps,
+  composeTaskTitle,
+  parseTaskTitleForEdit,
   resolveTaskColor,
   scheduleStyleFromColor,
   SELECT_COLOR,
@@ -16,14 +18,16 @@ import {
   STATUS,
   TASK_KIND,
   TASK_KIND_META,
-  taskColumnDate,
   taskDuration,
   taskEndMoment,
+  taskOverlapsDate,
   taskStartMoment,
   taskTimelineOnDate,
   TIME_SLOTS,
   toDateKey,
-  buildRangeFromClock,
+  toDatetimeLocalValue,
+  momentFromColumnDateAndClock,
+  buildRangeFromDatetimeLocal,
   DAY_VIEW_MINUTES,
   pad,
   weekDates,
@@ -42,7 +46,10 @@ const days = computed(() => weekDates(app.weekAnchor.value))
  * | { mode: 'form', date, timeSlot, title, status, kind, id? }
  */
 const dialog = ref(null)
-const titleInput = ref(null)
+const noteInput = ref(null)
+const formError = ref('')
+/** 計時分類（與任務計時共用） */
+const timerCategories = computed(() => app.store.timerCategories || [])
 /** 'all' | 'plan' | 'schedule' — 與 app.weekViewFilter 同步 */
 const viewFilter = computed({
   get: () => app.weekViewFilter.value,
@@ -115,7 +122,7 @@ const weekDateKeys = computed(() => days.value.map((d) => toDateKey(d)))
 /** 本週各日欄上的項目（分鐘級定位 + 重疊並排） */
 const dayBlockLayers = computed(() => {
   return weekDateKeys.value.map((dateKey, dayIdx) => {
-    let list = app.store.tasks.filter((t) => taskColumnDate(t) === dateKey)
+    let list = app.store.tasks.filter((t) => taskOverlapsDate(t, dateKey))
     if (viewFilter.value === 'plan') list = list.filter(isPlanTask)
     else if (viewFilter.value === 'schedule') list = list.filter((t) => !isPlanTask(t))
 
@@ -152,16 +159,17 @@ const dayBlockLayers = computed(() => {
   })
 })
 
-function clockFromTask(task, which) {
-  const m = which === 'start' ? taskStartMoment(task) : taskEndMoment(task)
-  if (!m) return '09:00:00'
-  return `${pad(m.getHours())}:${pad(m.getMinutes())}:${pad(m.getSeconds())}`
+function startTimeFromSlot(timeSlot) {
+  return `${timeSlot.slice(0, 2)}:00:00`
 }
 
-function defaultEndTime(startTime) {
-  const [h = 9, m = 0, s = 0] = String(startTime || '09:00:00').split(':').map(Number)
-  const endH = (h + 1) % 24
-  return `${pad(endH)}:${pad(m)}:${pad(s)}`
+function initialDatetimeRange(date, timeSlot) {
+  const start = momentFromColumnDateAndClock(date, startTimeFromSlot(timeSlot))
+  const end = new Date(start.getTime() + 3600000)
+  return {
+    startAtLocal: toDatetimeLocalValue(start),
+    endAtLocal: toDatetimeLocalValue(end)
+  }
 }
 
 function scheduleChipClass(task) {
@@ -173,10 +181,6 @@ function scheduleChipClass(task) {
 function scheduleChipStyle(task) {
   if (isPlanTask(task)) return undefined
   return scheduleStyleFromColor(resolveTaskColor(task, app.store.timerCategories))
-}
-
-function startTimeFromSlot(timeSlot) {
-  return `${timeSlot.slice(0, 2)}:00:00`
 }
 
 function showTimeRange(task) {
@@ -203,22 +207,27 @@ function openCell(date, timeSlot) {
 }
 
 function openKindPick(payload) {
-  const startTime = payload.timeSlot ? startTimeFromSlot(payload.timeSlot) : '09:00:00'
+  const range =
+    payload.date && payload.timeSlot
+      ? initialDatetimeRange(payload.date, payload.timeSlot)
+      : {
+          startAtLocal: toDatetimeLocalValue(new Date()),
+          endAtLocal: toDatetimeLocalValue(new Date(Date.now() + 3600000))
+        }
   dialog.value = {
     mode: 'kind-pick',
     kind: TASK_KIND.plan,
-    startTime,
-    endTime: defaultEndTime(startTime),
+    ...range,
     ...payload
   }
 }
 
 function chooseKind(kind) {
   if (!dialog.value || dialog.value.mode !== 'kind-pick') return
-  const { purpose, date, timeSlot, taskId } = dialog.value
+  const { purpose, date, timeSlot, taskId, startAtLocal, endAtLocal } = dialog.value
 
   if (purpose === 'add') {
-    openAddForm(date, timeSlot, kind)
+    openAddForm(date, timeSlot, kind, { startAtLocal, endAtLocal })
     return
   }
 
@@ -231,41 +240,49 @@ function chooseKind(kind) {
 function confirmDropTodo() {
   if (!dialog.value || dialog.value.mode !== 'kind-pick') return
   if (dialog.value.purpose !== 'drop-todo' || !dialog.value.todoId) return
-  const { date, timeSlot, todoId, kind, startTime, endTime } = dialog.value
-  const range = buildRangeFromClock(date, startTime, endTime)
+  const { date, timeSlot, todoId, kind, startAtLocal, endAtLocal } = dialog.value
+  const range = buildRangeFromDatetimeLocal(startAtLocal, endAtLocal)
+  if (!range) return
   app.placeTodo(todoId, date, timeSlot, kind || TASK_KIND.plan, range.startAt, range.endAt)
   closeDialog()
 }
 
-function openAddForm(date, timeSlot, kind = TASK_KIND.plan) {
-  const startTime = startTimeFromSlot(timeSlot)
+function openAddForm(date, timeSlot, kind = TASK_KIND.plan, preset = null) {
+  const range = preset || initialDatetimeRange(date, timeSlot)
   dialog.value = {
     mode: 'form',
     date,
     timeSlot,
-    startTime,
-    endTime: defaultEndTime(startTime),
-    title: '',
+    startAtLocal: range.startAtLocal,
+    endAtLocal: range.endAtLocal,
+    categoryId: '',
+    note: '',
     status: STATUS.todo,
     kind,
     id: null
   }
-  nextTick(() => titleInput.value?.focus())
+  formError.value = ''
+  nextTick(() => noteInput.value?.focus())
 }
 
 function openEditForm(task) {
+  const start = taskStartMoment(task)
+  const end = taskEndMoment(task)
+  const parsed = parseTaskTitleForEdit(task, app.store.timerCategories)
   dialog.value = {
     mode: 'form',
     date: task.date,
     timeSlot: task.timeSlot,
-    startTime: clockFromTask(task, 'start'),
-    endTime: clockFromTask(task, 'end'),
-    title: task.title || '',
+    startAtLocal: start ? toDatetimeLocalValue(start) : '',
+    endAtLocal: end ? toDatetimeLocalValue(end) : '',
+    categoryId: parsed.categoryId || '',
+    note: parsed.note,
     status: task.status || STATUS.todo,
     kind: isPlanTask(task) ? TASK_KIND.plan : TASK_KIND.schedule,
     id: task.id
   }
-  nextTick(() => titleInput.value?.focus())
+  formError.value = ''
+  nextTick(() => noteInput.value?.focus())
 }
 
 function pickerTasks() {
@@ -275,30 +292,37 @@ function pickerTasks() {
 
 function closeDialog() {
   dialog.value = null
+  formError.value = ''
+}
+
+function resolveFormTitle() {
+  if (!dialog.value || dialog.value.mode !== 'form') return ''
+  const cat = timerCategories.value.find((c) => c.id === dialog.value.categoryId)
+  return composeTaskTitle(cat?.name, dialog.value.note)
 }
 
 function saveEdit() {
   if (!dialog.value || dialog.value.mode !== 'form') return
-  const { date, timeSlot, title, status, kind, id, startTime, endTime } = dialog.value
-  if (!title.trim()) {
-    if (id) {
-      app.removeTask(id)
-      app.persistNow('Delete empty task')
-    }
-  } else {
-    const range = buildRangeFromClock(date, startTime, endTime)
-    app.upsertTask({
-      id: id || undefined,
-      date,
-      timeSlot,
-      title: title.trim(),
-      status,
-      kind,
-      startAt: range.startAt,
-      endAt: range.endAt
-    })
-    app.persistNow(`Upsert task: ${title.trim()}`)
+  const { status, kind, id, startAtLocal, endAtLocal, categoryId } = dialog.value
+  const title = resolveFormTitle()
+  if (!title) {
+    formError.value = '請輸入或選擇內容'
+    return
   }
+  const range = buildRangeFromDatetimeLocal(startAtLocal, endAtLocal)
+  if (!range) return
+  const cat = timerCategories.value.find((c) => c.id === categoryId)
+  app.upsertTask({
+    id: id || undefined,
+    title,
+    status,
+    kind,
+    startAt: range.startAt,
+    endAt: range.endAt,
+    categoryId: cat?.id,
+    color: cat?.color
+  })
+  app.persistNow(`Upsert task: ${title}`)
   closeDialog()
 }
 
@@ -698,23 +722,23 @@ onUnmounted(() => {
               </p>
             </div>
             <label class="block">
-              <span class="mb-1 block text-sm font-medium text-ink">開始時間</span>
+              <span class="mb-1 block text-sm font-medium text-ink">開始</span>
               <input
-                v-model="dialog.startTime"
-                type="time"
-                step="1"
+                v-model="dialog.startAtLocal"
+                type="datetime-local"
+                step="60"
                 class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
               />
             </label>
             <label class="block">
-              <span class="mb-1 block text-sm font-medium text-ink">結束時間</span>
+              <span class="mb-1 block text-sm font-medium text-ink">結束</span>
               <input
-                v-model="dialog.endTime"
-                type="time"
-                step="1"
+                v-model="dialog.endAtLocal"
+                type="datetime-local"
+                step="60"
                 class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
               />
-              <p class="mt-1 text-xs text-mute">若結束時間早於開始，會視為跨到隔日。</p>
+              <p class="mt-1 text-xs text-mute">可選不同日期以設定跨日行程。</p>
             </label>
           </div>
           <div class="flex gap-2 border-t border-line px-4 py-3">
@@ -778,27 +802,26 @@ onUnmounted(() => {
               : `新增${TASK_KIND_META[dialog.kind]?.label || '項目'}`
           }}
         </h3>
-        <p class="mt-1 text-xs font-medium text-ink/70">{{ dialog.date }}</p>
+        <p class="mt-1 text-xs text-mute">開始與結束可含日期，支援跨日。</p>
 
         <label class="mt-4 block">
-          <span class="mb-1 block text-sm font-medium">開始時間</span>
+          <span class="mb-1 block text-sm font-medium">開始</span>
           <input
-            v-model="dialog.startTime"
-            type="time"
-            step="1"
+            v-model="dialog.startAtLocal"
+            type="datetime-local"
+            step="60"
             class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
           />
         </label>
 
         <label class="mt-4 block">
-          <span class="mb-1 block text-sm font-medium">結束時間</span>
+          <span class="mb-1 block text-sm font-medium">結束</span>
           <input
-            v-model="dialog.endTime"
-            type="time"
-            step="1"
+            v-model="dialog.endAtLocal"
+            type="datetime-local"
+            step="60"
             class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
           />
-          <p class="mt-1 text-xs text-mute">若結束時間早於開始，會視為跨到隔日。</p>
         </label>
 
         <div class="mt-4">
@@ -824,18 +847,40 @@ onUnmounted(() => {
         </div>
 
         <label class="mt-4 block">
-          <span class="mb-1 block text-sm font-medium">
-            {{ dialog.kind === TASK_KIND.schedule ? '日程內容' : '計劃名稱' }}
-          </span>
+          <span class="mb-1 block text-sm font-medium">計時分類（可選）</span>
+          <select
+            v-if="timerCategories.length"
+            v-model="dialog.categoryId"
+            class="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
+            @change="formError = ''"
+          >
+            <option value="">不選擇</option>
+            <option v-for="cat in timerCategories" :key="cat.id" :value="cat.id">
+              {{ cat.name }}
+            </option>
+          </select>
+          <p v-else class="text-xs text-mute">尚無分類，可於左側「任務計時」新增。</p>
+        </label>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-sm font-medium">補充說明（可選）</span>
           <input
-            ref="titleInput"
-            v-model="dialog.title"
+            ref="noteInput"
+            v-model="dialog.note"
             type="text"
             class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
             :placeholder="dialog.kind === TASK_KIND.schedule ? '例如：與小王開會討論提案' : '例如：處理郵件'"
             @keydown.enter.prevent="saveEdit"
+            @input="formError = ''"
           />
+          <p class="mt-1 text-xs text-mute">選分類或輸入文字即可儲存；兩者都有時會組成「分類「備註」」。</p>
         </label>
+
+        <p v-if="formError" class="mt-2 text-sm text-status-todo">{{ formError }}</p>
+
+        <p v-if="resolveFormTitle()" class="mt-2 rounded-xl bg-soft px-3 py-2 text-xs text-ink">
+          預覽：{{ resolveFormTitle() }}
+        </p>
 
         <div v-if="dialog.kind === TASK_KIND.plan" class="mt-4">
           <p class="mb-2 text-sm font-medium">狀態</p>

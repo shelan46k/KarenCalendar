@@ -34,7 +34,7 @@ export function isPlanTask(task) {
   return normalizeTaskKind(task?.kind) === TASK_KIND.plan
 }
 
-/** 每日格 06:00–隔日 05:59，共 1440 分鐘 */
+/** 每日格 00:00–23:59，共 1440 分鐘 */
 export const DAY_VIEW_MINUTES = 24 * 60
 
 /** 佔用幾個連續時段（至少 1） */
@@ -59,19 +59,16 @@ export function formatLocalDateTime(date, withSeconds = false) {
   return withSeconds ? `${base}:${pad(date.getSeconds())}` : base
 }
 
-/** 06:00 前歸前一日欄（週曆一欄 = 當日 06:00 至隔日 05:59） */
+/** 行事曆欄日期（與日曆 0 點對齊） */
 export function calendarDateKeyFromMoment(date) {
   const d = new Date(date)
-  if (d.getHours() < 6) {
-    d.setDate(d.getDate() - 1)
-  }
-  d.setHours(0, 0, 0, 0)
+  if (Number.isNaN(d.getTime())) return ''
   return toDateKey(d)
 }
 
 export function dayViewStart(dateKey) {
   const d = parseDateKey(dateKey)
-  d.setHours(6, 0, 0, 0)
+  d.setHours(0, 0, 0, 0)
   return d
 }
 
@@ -81,10 +78,7 @@ export function taskStartMoment(task) {
     if (parsed) return parsed
   }
   if (task?.date && task?.timeSlot) {
-    const d = parseDateKey(task.date)
-    const [h] = task.timeSlot.split(':').map(Number)
-    d.setHours(h, 0, 0, 0)
-    return d
+    return momentFromColumnDateAndClock(task.date, task.timeSlot)
   }
   return null
 }
@@ -102,7 +96,7 @@ export function taskEndMoment(task) {
   return end
 }
 
-/** 項目在指定日期欄上的分鐘區間（相對該欄 06:00） */
+/** 項目在指定日期欄上的分鐘區間（相對該欄 00:00） */
 export function taskTimelineOnDate(task, dateKey) {
   const start = taskStartMoment(task)
   const end = taskEndMoment(task)
@@ -121,6 +115,30 @@ export function taskTimelineOnDate(task, dateKey) {
   return { startMin, endMin }
 }
 
+/** 項目是否與指定日期欄重疊（跨日時可在多日各顯示一格） */
+export function taskOverlapsDate(task, dateKey) {
+  return taskTimelineOnDate(task, dateKey) != null
+}
+
+/** 項目是否與日期區間 [fromKey, toKey] 重疊（含起迄日） */
+export function taskOverlapsDateRange(task, fromKey, toKey) {
+  const start = taskStartMoment(task)
+  const end = taskEndMoment(task)
+  if (!start || !end || !fromKey || !toKey) return false
+  let from = fromKey
+  let to = toKey
+  if (from > to) {
+    const tmp = from
+    from = to
+    to = tmp
+  }
+  const rangeStart = parseDateKey(from)
+  rangeStart.setHours(0, 0, 0, 0)
+  const rangeEnd = parseDateKey(to)
+  rangeEnd.setHours(23, 59, 59, 999)
+  return start.getTime() <= rangeEnd.getTime() && end.getTime() >= rangeStart.getTime()
+}
+
 export function taskColumnDate(task) {
   const start = taskStartMoment(task)
   if (start) return calendarDateKeyFromMoment(start)
@@ -128,10 +146,7 @@ export function taskColumnDate(task) {
 }
 
 export function buildStartAtFromSlot(date, timeSlot) {
-  const d = parseDateKey(date)
-  const [h] = timeSlot.split(':').map(Number)
-  d.setHours(h, 0, 0, 0)
-  return formatLocalDateTime(d, true)
+  return formatLocalDateTime(momentFromColumnDateAndClock(date, timeSlot), true)
 }
 
 export function buildEndAtFromSlot(date, timeSlot, duration) {
@@ -142,13 +157,47 @@ export function buildEndAtFromSlot(date, timeSlot, duration) {
 }
 
 export function buildRangeFromClock(date, startTime, endTime) {
-  const [sh, sm = 0, ss = 0] = String(startTime || '09:00:00').split(':').map(Number)
-  const [eh, em = 0, es = 0] = String(endTime || '10:00:00').split(':').map(Number)
-  const start = parseDateKey(date)
-  start.setHours(sh, sm, ss, 0)
-  const end = parseDateKey(date)
-  end.setHours(eh, em, es, 0)
-  if (end <= start) end.setDate(end.getDate() + 1)
+  const start = momentFromColumnDateAndClock(date, startTime)
+  let end = momentFromColumnDateAndClock(date, endTime)
+  if (end <= start) {
+    end = new Date(end)
+    end.setDate(end.getDate() + 1)
+  }
+  return {
+    startAt: formatLocalDateTime(start, true),
+    endAt: formatLocalDateTime(end, true)
+  }
+}
+
+/** `datetime-local` 輸入值（YYYY-MM-DDTHH:mm） */
+export function toDatetimeLocalValue(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return ''
+  return `${toDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+export function parseDatetimeLocalValue(value) {
+  if (!value || typeof value !== 'string') return null
+  const m = value.trim().match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/)
+  if (!m) return null
+  const [, datePart, h, mi, s] = m
+  return parseLocalDateTime(`${datePart}T${h}:${mi}:${s || '00'}`)
+}
+
+export function defaultEndDatetimeLocal(startLocal, hours = 1) {
+  const start = parseDatetimeLocalValue(startLocal)
+  if (!start) return ''
+  return toDatetimeLocalValue(new Date(start.getTime() + hours * 3600000))
+}
+
+export function buildRangeFromDatetimeLocal(startLocal, endLocal) {
+  const start = parseDatetimeLocalValue(startLocal)
+  let end = parseDatetimeLocalValue(endLocal)
+  if (!start || !end) return null
+  if (end <= start) {
+    end = new Date(end)
+    end.setDate(end.getDate() + 1)
+  }
+  if (end <= start) return null
   return {
     startAt: formatLocalDateTime(start, true),
     endAt: formatLocalDateTime(end, true)
@@ -209,6 +258,11 @@ export function formatTimeRange(task) {
     const s = showSec ? `${sh}:${sm}:${ss}` : `${sh}:${sm}`
     const e = showSec ? `${eh}:${em}:${es}` : `${eh}:${em}`
     if (s === e) return s
+    if (toDateKey(start) !== toDateKey(end)) {
+      const sd = `${start.getMonth() + 1}/${start.getDate()}`
+      const ed = `${end.getMonth() + 1}/${end.getDate()}`
+      return `${sd} ${s} – ${ed} ${e}`
+    }
     return `${s}–${e}`
   }
   const slot = task?.timeSlot || ''
@@ -275,11 +329,8 @@ export const selectBorderBgStyle = {
   borderColor: SELECT_COLOR
 }
 
-/** 06:00 ~ 05:00（隔天）共 24 小時 */
-export const TIME_SLOTS = [
-  ...Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`),
-  ...Array.from({ length: 6 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
-]
+/** 00:00 ~ 23:00 共 24 小時 */
+export const TIME_SLOTS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
 
 const STORAGE_KEY = 'karen-calendar-config'
 
@@ -326,6 +377,18 @@ export function toDateKey(date) {
 export function parseDateKey(key) {
   const [y, m, d] = key.split('-').map(Number)
   return new Date(y, m - 1, d)
+}
+
+/** 週曆欄日期 + 時鐘／時段 → 實際時刻（當日 0 點起算） */
+export function momentFromColumnDateAndClock(dateKey, timeOrSlot) {
+  const raw = String(timeOrSlot || '09:00')
+  const parts = raw.split(':').map(Number)
+  const h = parts[0] ?? 9
+  const m = parts[1] ?? 0
+  const s = parts[2] ?? 0
+  const d = parseDateKey(dateKey)
+  d.setHours(h, m, s, 0)
+  return d
 }
 
 export function toMonthKey(date) {
@@ -435,6 +498,46 @@ export function resolveTaskColor(task, categories = []) {
   if (direct) return direct
   const cat = categories.find((c) => c.id === task?.categoryId)
   return cat?.color || null
+}
+
+/** 自訂補充文字外框（分類後方的備註） */
+export function wrapTaskNote(text) {
+  const inner = unwrapTaskNote(text)
+  if (!inner) return ''
+  return `「${inner}」`
+}
+
+export function unwrapTaskNote(text) {
+  const t = String(text || '').trim()
+  const m = t.match(/^「(.+)」$/) || t.match(/^【(.+)】$/) || t.match(/^\[(.+)\]$/)
+  return m ? m[1].trim() : t
+}
+
+/** 組合儲存標題：分類在前，備註以「」包住 */
+export function composeTaskTitle(categoryName, note) {
+  const cat = String(categoryName || '').trim()
+  const noteInner = unwrapTaskNote(note)
+  const notePart = noteInner ? wrapTaskNote(noteInner) : ''
+  if (cat && notePart) return `${cat}${notePart}`
+  if (cat) return cat
+  if (notePart) return notePart
+  return ''
+}
+
+/** 編輯表單：還原分類與備註欄位 */
+export function parseTaskTitleForEdit(task, categories = []) {
+  const title = String(task?.title || '').trim()
+  const cat = categories.find((c) => c.id === task?.categoryId)
+  if (!cat) {
+    return { categoryId: null, note: unwrapTaskNote(title) }
+  }
+  if (title === cat.name) {
+    return { categoryId: cat.id, note: '' }
+  }
+  if (title.startsWith(cat.name)) {
+    return { categoryId: cat.id, note: unwrapTaskNote(title.slice(cat.name.length)) }
+  }
+  return { categoryId: cat.id, note: unwrapTaskNote(title) }
 }
 
 /** 日程格子 inline 樣式（依分類色） */

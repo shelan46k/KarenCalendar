@@ -23,6 +23,7 @@ import {
   TASK_KIND,
   taskCoversSlot,
   taskColumnDate,
+  taskOverlapsDate,
   taskDuration,
   taskStartMoment,
   toDateKey,
@@ -228,7 +229,7 @@ export function useCalendarApp() {
   }
 
   function tasksOn(dateKey) {
-    return store.tasks.filter((t) => taskColumnDate(t) === dateKey)
+    return store.tasks.filter((t) => taskOverlapsDate(t, dateKey))
   }
 
   function tasksAt(dateKey, timeSlot) {
