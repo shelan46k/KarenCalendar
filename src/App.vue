@@ -11,6 +11,7 @@ import SetupModal from './components/SetupModal.vue'
 import LeftDashboard from './components/LeftDashboard.vue'
 import WeeklySchedule from './components/WeeklySchedule.vue'
 import TaskTimer from './components/TaskTimer.vue'
+import { APP_VERSION_LABEL } from './version'
 
 const POLL_MS = 60_000
 
@@ -219,6 +220,7 @@ async function handleRefresh() {
         <div class="min-w-0 shrink">
           <h1 class="text-lg font-bold tracking-tight text-ink md:text-xl">
             Karen Calendar
+            <span class="ml-1.5 text-sm font-semibold text-mute md:text-base">{{ APP_VERSION_LABEL }}</span>
           </h1>
           <p class="text-xs text-mute">
             <span v-if="app.saving.value" class="text-brand">同步中…</span>

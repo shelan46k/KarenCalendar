@@ -92,11 +92,8 @@ function trySaveEnd() {
 }
 
 function onCategoryClick(cat) {
-  selectedCatId.value = cat.id
+  selectedCatId.value = selectedCatId.value === cat.id ? null : cat.id
   endDialogError.value = ''
-  if (!customTitle.value.trim()) {
-    trySaveEnd()
-  }
 }
 
 function addCategory() {
@@ -287,7 +284,7 @@ function removeCategory(id) {
               @input="endDialogError = ''"
               @keydown.enter.prevent="trySaveEnd"
             />
-            <p class="mt-1 text-xs text-mute">點分類可快速儲存；有打字時請按下方完成。</p>
+            <p class="mt-1 text-xs text-mute">先選分類、再視需要輸入說明，最後按「完成並記錄」。</p>
           </label>
 
           <p v-if="endDialogError" class="mt-2 text-sm text-status-todo">{{ endDialogError }}</p>
