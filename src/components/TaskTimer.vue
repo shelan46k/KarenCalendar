@@ -225,21 +225,53 @@ function removeCategory(id) {
       </template>
 
       <template v-else>
-        <div class="rounded-xl border border-brand/30 bg-brand-soft/50 px-4 py-3 text-center">
-          <p class="text-xs font-medium text-brand-deep">進行中</p>
+        <div
+          class="rounded-xl border px-4 py-3 text-center"
+          :class="
+            timer.isPaused.value
+              ? 'border-amber-300/60 bg-amber-50/80'
+              : 'border-brand/30 bg-brand-soft/50'
+          "
+        >
+          <p
+            class="text-xs font-medium"
+            :class="timer.isPaused.value ? 'text-amber-800' : 'text-brand-deep'"
+          >
+            {{ timer.isPaused.value ? '已暫停' : '進行中' }}
+          </p>
           <p class="mt-1 text-2xl font-bold tabular-nums tracking-tight text-ink">
             {{ timer.elapsedLabel.value }}
           </p>
-          <p class="mt-1 text-[11px] text-mute">切到其他 App 也會繼續計時</p>
+          <p class="mt-1 text-[11px] text-mute">
+            {{ timer.isPaused.value ? '暫停時間不計入紀錄' : '切到其他 App 也會繼續計時' }}
+          </p>
         </div>
 
-        <button
-          type="button"
-          class="w-full rounded-xl border border-line bg-white px-4 py-3 text-sm font-semibold text-ink hover:bg-soft"
-          @click="timer.openEndDialog()"
-        >
-          結束計時 🔚
-        </button>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            v-if="!timer.isPaused.value"
+            type="button"
+            class="rounded-xl border border-line bg-white px-4 py-3 text-sm font-semibold text-ink hover:bg-soft"
+            @click="timer.pauseTimer()"
+          >
+            暫停 ⏸
+          </button>
+          <button
+            v-else
+            type="button"
+            class="rounded-xl bg-brand px-4 py-3 text-sm font-semibold text-white hover:bg-brand-deep"
+            @click="timer.resumeTimer()"
+          >
+            繼續 ▶
+          </button>
+          <button
+            type="button"
+            class="rounded-xl border border-line bg-white px-4 py-3 text-sm font-semibold text-ink hover:bg-soft"
+            @click="timer.openEndDialog()"
+          >
+            結束計時 🔚
+          </button>
+        </div>
       </template>
 
       <p v-if="timer.notifyHint.value" class="text-xs text-status-todo">

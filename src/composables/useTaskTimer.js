@@ -11,7 +11,11 @@ function loadActive() {
     if (!raw) return null
     const parsed = JSON.parse(raw)
     if (!parsed?.startAt) return null
-    return parsed
+    return {
+      ...parsed,
+      pausedMs: Number(parsed.pausedMs) >= 0 ? Number(parsed.pausedMs) : 0,
+      pausedAt: parsed.pausedAt || null
+    }
   } catch {
     return null
   }
@@ -63,14 +67,28 @@ export function useTaskTimer() {
 
   const isRunning = computed(() => !!active.value?.startAt)
 
+  const isPaused = computed(() => !!active.value?.pausedAt)
+
   const startMoment = computed(() => {
     if (!active.value?.startAt) return null
     return parseLocalDateTime(active.value.startAt)
   })
 
+  /** 已累積暫停 + 目前這段暫停（若正在暫停） */
+  function totalPausedMsAt(nowMs) {
+    if (!active.value) return 0
+    let total = Number(active.value.pausedMs) || 0
+    if (active.value.pausedAt) {
+      const pausedStart = parseLocalDateTime(active.value.pausedAt)
+      if (pausedStart) total += Math.max(0, nowMs - pausedStart.getTime())
+    }
+    return total
+  }
+
   const elapsedMs = computed(() => {
     if (!startMoment.value) return 0
-    return nowTick.value - startMoment.value.getTime()
+    const wall = nowTick.value - startMoment.value.getTime()
+    return Math.max(0, wall - totalPausedMsAt(nowTick.value))
   })
 
   const elapsedLabel = computed(() => formatElapsed(elapsedMs.value))
@@ -88,19 +106,22 @@ export function useTaskTimer() {
   })
 
   function syncNextReminder() {
-    if (!active.value?.startAt) return
+    if (!active.value?.startAt || active.value.pausedAt) {
+      if (active.value) active.value.nextReminderAt = null
+      return
+    }
     const mins = settings.value.reminderMinutes
     active.value.reminderMinutes = mins
     if (mins <= 0) {
       active.value.nextReminderAt = null
       return
     }
-    const start = parseLocalDateTime(active.value.startAt)
-    if (!start) return
     const interval = mins * 60_000
-    let next = start.getTime() + interval
-    while (next <= Date.now()) next += interval
-    active.value.nextReminderAt = formatLocalDateTime(new Date(next), true)
+    // 以「有效工作時間」為準：下次提醒 = 現在 + 剩餘到下一個間隔
+    const worked = elapsedMs.value
+    const nextWorked = Math.floor(worked / interval) * interval + interval
+    const delay = Math.max(1000, nextWorked - worked)
+    active.value.nextReminderAt = formatLocalDateTime(new Date(Date.now() + delay), true)
   }
 
   function startTicking() {
@@ -120,15 +141,12 @@ export function useTaskTimer() {
 
   async function checkReminders() {
     if (!active.value?.nextReminderAt || settings.value.reminderMinutes <= 0) return
+    if (active.value.pausedAt) return
     const next = parseLocalDateTime(active.value.nextReminderAt)
     if (!next || Date.now() < next.getTime()) return
 
     void showAppNotification('仍在計時中', `已 ${formatElapsed(elapsedMs.value)}`, 'karen-timer-reminder')
-
-    const interval = settings.value.reminderMinutes * 60_000
-    let ts = next.getTime()
-    while (ts <= Date.now()) ts += interval
-    active.value.nextReminderAt = formatLocalDateTime(new Date(ts), true)
+    syncNextReminder()
     saveActive(active.value)
   }
 
@@ -143,17 +161,40 @@ export function useTaskTimer() {
     const startAt = formatLocalDateTime(new Date(), true)
     active.value = {
       startAt,
+      pausedMs: 0,
+      pausedAt: null,
       reminderMinutes: settings.value.reminderMinutes,
       nextReminderAt: null
     }
+    nowTick.value = Date.now()
     syncNextReminder()
     saveActive(active.value)
-    nowTick.value = Date.now()
     startTicking()
 
     if (granted) {
       void showAppNotification('任務開始啦！', '加油～', 'karen-timer-start')
     }
+  }
+
+  function pauseTimer() {
+    if (!active.value?.startAt || active.value.pausedAt) return
+    active.value.pausedAt = formatLocalDateTime(new Date(), true)
+    active.value.nextReminderAt = null
+    saveActive(active.value)
+    nowTick.value = Date.now()
+  }
+
+  function resumeTimer() {
+    if (!active.value?.startAt || !active.value.pausedAt) return
+    const pausedStart = parseLocalDateTime(active.value.pausedAt)
+    const now = Date.now()
+    if (pausedStart) {
+      active.value.pausedMs = (Number(active.value.pausedMs) || 0) + Math.max(0, now - pausedStart.getTime())
+    }
+    active.value.pausedAt = null
+    nowTick.value = now
+    syncNextReminder()
+    saveActive(active.value)
   }
 
   function openEndDialog() {
@@ -165,13 +206,20 @@ export function useTaskTimer() {
     showEndDialog.value = false
   }
 
-  /** 結束計時用的時間區間（不清除計時狀態） */
+  /**
+   * 結束計時用的時間區間（不清除計時狀態）
+   * endAt = 實際結束時刻 − 暫停總時長，使紀錄時長 = 有效工作時間
+   * 例：1:00 開始、1:50 結束、暫停 10 分 → 記錄 1:00–1:40
+   */
   function getFinishRange() {
     if (!active.value?.startAt) return null
     const startAt = active.value.startAt
     const start = parseLocalDateTime(startAt)
     if (!start) return null
-    let end = new Date()
+
+    const now = Date.now()
+    const paused = totalPausedMsAt(now)
+    let end = new Date(now - paused)
     if (end <= start) {
       end = new Date(start.getTime() + 1000)
     }
@@ -192,7 +240,7 @@ export function useTaskTimer() {
 
   function onVisibilityChange() {
     nowTick.value = Date.now()
-    if (document.visibilityState === 'visible' && isRunning.value) {
+    if (document.visibilityState === 'visible' && isRunning.value && !isPaused.value) {
       checkReminders()
     }
   }
@@ -200,7 +248,7 @@ export function useTaskTimer() {
   onMounted(() => {
     if (isRunning.value) {
       nowTick.value = Date.now()
-      syncNextReminder()
+      if (!isPaused.value) syncNextReminder()
       saveActive(active.value)
       startTicking()
     }
@@ -220,12 +268,15 @@ export function useTaskTimer() {
   return {
     active,
     isRunning,
+    isPaused,
     elapsedLabel,
     elapsedMs,
     reminderMinutes,
     showEndDialog,
     notifyHint,
     startTimer,
+    pauseTimer,
+    resumeTimer,
     openEndDialog,
     closeEndDialog,
     getFinishRange,

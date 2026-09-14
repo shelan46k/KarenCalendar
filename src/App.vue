@@ -277,18 +277,38 @@ async function handleRefresh() {
       >
         <div class="mx-auto flex max-w-[1600px] items-center justify-between gap-3">
           <div class="min-w-0">
-            <p class="text-xs font-semibold text-brand-deep">任務進行中</p>
+            <p class="text-xs font-semibold text-brand-deep">
+              {{ timer.isPaused.value ? '任務已暫停' : '任務進行中' }}
+            </p>
             <p class="truncate text-sm font-bold tabular-nums text-ink">
               {{ timer.elapsedLabel.value }}
             </p>
           </div>
-          <button
-            type="button"
-            class="shrink-0 rounded-xl border border-brand/40 bg-white px-3 py-1.5 text-sm font-semibold text-brand-deep hover:bg-white/80"
-            @click="timer.openEndDialog()"
-          >
-            結束 🔚
-          </button>
+          <div class="flex shrink-0 items-center gap-2">
+            <button
+              v-if="!timer.isPaused.value"
+              type="button"
+              class="rounded-xl border border-brand/40 bg-white px-3 py-1.5 text-sm font-semibold text-brand-deep hover:bg-white/80"
+              @click="timer.pauseTimer()"
+            >
+              暫停
+            </button>
+            <button
+              v-else
+              type="button"
+              class="rounded-xl border border-brand/40 bg-white px-3 py-1.5 text-sm font-semibold text-brand-deep hover:bg-white/80"
+              @click="timer.resumeTimer()"
+            >
+              繼續
+            </button>
+            <button
+              type="button"
+              class="rounded-xl border border-brand/40 bg-white px-3 py-1.5 text-sm font-semibold text-brand-deep hover:bg-white/80"
+              @click="timer.openEndDialog()"
+            >
+              結束 🔚
+            </button>
+          </div>
         </div>
       </div>
     </header>
