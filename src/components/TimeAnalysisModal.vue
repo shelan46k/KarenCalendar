@@ -206,7 +206,7 @@ function close() {
             <span class="min-w-0">
               <span class="block text-sm font-medium text-ink">選擇分類（可多選）</span>
               <span class="mt-0.5 block text-[11px] text-mute">
-                {{ selectedCountLabel }} · 選父層會拆成子項占比；圓餅 100% = 所選合計
+                {{ selectedCountLabel }} · 只顯示有勾選的分類；勾父層時未勾的子項時間會併入父層
               </span>
             </span>
             <span class="shrink-0 text-xs text-mute" aria-hidden="true">

@@ -708,11 +708,11 @@ export function resolveTaskCategoryId(task, categories = []) {
 }
 
 /**
- * 依選取節點展開圓餅切片。
- * - 選有子節點的分類 → 直接子項（含子孫彙總）+ 必要時「本層」
- * - 選葉節點 → 該節點（含子孫，葉則僅自身）
- * - 選未分類 → 未分類
- * 切片 100% = 各切片合計
+ * 依「實際勾選」的分類組成圓餅切片（不自動展開未勾選的子分類）。
+ * - 任務時間歸到「最接近的已勾選祖先／自身」（深層優先）
+ * - 只勾父層 → 子孫時間併入父層一條
+ * - 父層與子層都勾 → 各自獨立，互不重複計算
+ * - 切片 100% = 各切片合計
  */
 export function buildTimeAnalysisSlices({
   tasks = [],
@@ -723,37 +723,40 @@ export function buildTimeAnalysisSlices({
 }) {
   const inRange = (tasks || []).filter((t) => taskOverlapsDateRange(t, fromKey, toKey))
   const selected = [...new Set((selectedIds || []).filter(Boolean))]
+  const selectedSet = new Set(selected)
   if (!selected.length) {
     return { slices: [], stats: { taskCount: inRange.length, timedCount: 0, totalMs: 0 } }
   }
 
-  const durationByCategoryId = new Map()
-  let uncategorizedMs = 0
+  /** 找到任務分類所屬、最深的已勾選節點 */
+  function attributionTarget(categoryId) {
+    if (!categoryId) {
+      return selectedSet.has(UNCATEGORIZED_ID) ? UNCATEGORIZED_ID : null
+    }
+    let cur = categoryId
+    const guard = new Set()
+    while (cur && !guard.has(cur)) {
+      guard.add(cur)
+      if (selectedSet.has(cur)) return cur
+      const node = getCategoryById(categories, cur)
+      cur = node?.parentId || null
+    }
+    return null
+  }
+
+  const msBySlice = new Map()
   let timedCount = 0
   for (const task of inRange) {
     const ms = taskDurationMs(task)
     if (ms <= 0) continue
     timedCount += 1
     const cid = resolveTaskCategoryId(task, categories)
-    if (!cid) {
-      uncategorizedMs += ms
-      continue
-    }
-    durationByCategoryId.set(cid, (durationByCategoryId.get(cid) || 0) + ms)
+    const target = attributionTarget(cid)
+    if (!target) continue
+    msBySlice.set(target, (msBySlice.get(target) || 0) + ms)
   }
-
-  const subtreeMs = (id) => {
-    let total = durationByCategoryId.get(id) || 0
-    for (const did of getDescendantIds(categories, id, false)) {
-      total += durationByCategoryId.get(did) || 0
-    }
-    return total
-  }
-
-  const selfOnlyMs = (id) => durationByCategoryId.get(id) || 0
 
   const sliceMap = new Map()
-
   const addSlice = (key, label, color, ms) => {
     if (ms <= 0) return
     const prev = sliceMap.get(key)
@@ -765,39 +768,19 @@ export function buildTimeAnalysisSlices({
   }
 
   for (const id of selected) {
+    const ms = msBySlice.get(id) || 0
     if (id === UNCATEGORIZED_ID) {
-      addSlice(UNCATEGORIZED_ID, '未分類', '#94a3b8', uncategorizedMs)
+      addSlice(UNCATEGORIZED_ID, '未分類', '#94a3b8', ms)
       continue
     }
     const cat = getCategoryById(categories, id)
     if (!cat) continue
-    const children = getCategoryChildren(categories, id)
-    if (children.length) {
-      for (const child of children) {
-        addSlice(
-          child.id,
-          child.name,
-          resolveCategoryColor(categories, child.id) || child.color,
-          subtreeMs(child.id)
-        )
-      }
-      const selfMs = selfOnlyMs(id)
-      if (selfMs > 0) {
-        addSlice(
-          `${id}__self`,
-          `${cat.name}（本層）`,
-          resolveCategoryColor(categories, id) || cat.color,
-          selfMs
-        )
-      }
-    } else {
-      addSlice(
-        cat.id,
-        cat.name,
-        resolveCategoryColor(categories, cat.id) || cat.color,
-        subtreeMs(cat.id)
-      )
-    }
+    addSlice(
+      cat.id,
+      cat.name,
+      resolveCategoryColor(categories, cat.id) || cat.color,
+      ms
+    )
   }
 
   const slices = [...sliceMap.values()]

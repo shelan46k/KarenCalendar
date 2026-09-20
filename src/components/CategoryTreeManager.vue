@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, ref } from 'vue'
+import { computed, inject, nextTick, ref } from 'vue'
 import {
   flattenCategoryOptions,
   getCategoryById,
@@ -16,10 +16,12 @@ const flatRows = computed(() => flattenCategoryOptions(categories.value))
 const showRootForm = ref(false)
 const newRootName = ref('')
 const newRootColor = ref('#F4A4B4')
+const rootNameInput = ref(null)
 
 const addingChildFor = ref(null)
 const newChildName = ref('')
 const newChildColor = ref('#F4A4B4')
+const childNameInput = ref(null)
 
 const draggingId = ref(null)
 const dropHint = ref(null)
@@ -44,10 +46,18 @@ const canMoveDown = computed(() => {
   return idx > 0
 })
 
+function toggleRootForm() {
+  showRootForm.value = !showRootForm.value
+  if (showRootForm.value) {
+    nextTick(() => rootNameInput.value?.focus())
+  }
+}
+
 function startAddChild(cat) {
   addingChildFor.value = cat.id
   newChildName.value = ''
   newChildColor.value = resolveCategoryColor(categories.value, cat.id) || cat.color || '#F4A4B4'
+  nextTick(() => childNameInput.value?.focus())
 }
 
 function cancelAddChild() {
@@ -175,7 +185,7 @@ function rowStyle(row) {
       <button
         type="button"
         class="text-xs font-medium text-brand-deep hover:underline"
-        @click="showRootForm = !showRootForm"
+        @click="toggleRootForm"
       >
         {{ showRootForm ? '取消新增' : '＋ 新增根分類' }}
       </button>
@@ -185,6 +195,7 @@ function rowStyle(row) {
       <label class="min-w-0 flex-1">
         <span class="mb-1 block text-[11px] text-mute">名稱</span>
         <input
+          ref="rootNameInput"
           v-model="newRootName"
           type="text"
           class="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand"
@@ -269,6 +280,7 @@ function rowStyle(row) {
           <label class="min-w-0 flex-1">
             <span class="mb-1 block text-[11px] text-mute">子分類名稱</span>
             <input
+              ref="childNameInput"
               v-model="newChildName"
               type="text"
               class="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand"
