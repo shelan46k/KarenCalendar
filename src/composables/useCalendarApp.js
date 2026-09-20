@@ -15,7 +15,14 @@ import {
   normalizeTask,
   normalizeTaskKind,
   normalizeTimerCategory,
+  normalizeTimerCategories,
   normalizeHexColor,
+  getCategoryChildren,
+  getCategoryById,
+  getCategoryPathLabel,
+  getDescendantIds,
+  isAncestorCategory,
+  resolveCategoryColor,
   parseDateKey,
   parseLocalDateTime,
   saveConfig,
@@ -491,10 +498,20 @@ export function useCalendarApp() {
     weekViewFilter.value = 'schedule'
   }
 
-  function addTimerCategory({ name, color }) {
-    const cat = normalizeTimerCategory({ id: createId(), name, color })
+  function addTimerCategory({ name, color, parentId = null }) {
+    const siblings = getCategoryChildren(store.timerCategories, parentId)
+    const parent = parentId ? getCategoryById(store.timerCategories, parentId) : null
+    const inherited = parent ? resolveCategoryColor(store.timerCategories, parent.id) : null
+    const cat = normalizeTimerCategory({
+      id: createId(),
+      name,
+      color: color || inherited || '#F4A4B4',
+      parentId: parentId || null,
+      sortOrder: siblings.length ? Math.max(...siblings.map((s) => s.sortOrder)) + 1 : 0
+    })
     if (!cat) return null
     store.timerCategories.push(cat)
+    store.timerCategories = normalizeTimerCategories(store.timerCategories)
     persistDebounced('Add timer category')
     return cat
   }
@@ -502,6 +519,18 @@ export function useCalendarApp() {
   function updateTimerCategory(id, patch) {
     const item = store.timerCategories.find((c) => c.id === id)
     if (!item) return
+
+    const willRename =
+      patch.name != null && String(patch.name).trim() && String(patch.name).trim() !== item.name
+    const willReparent = patch.parentId !== undefined && (patch.parentId || null) !== (item.parentId || null)
+    const pathMayChange = willRename || willReparent
+    const affectedIds = pathMayChange
+      ? [id, ...getDescendantIds(store.timerCategories, id, false)]
+      : []
+    const oldPaths = new Map(
+      affectedIds.map((cid) => [cid, getCategoryPathLabel(store.timerCategories, cid)])
+    )
+
     if (patch.name != null) {
       const name = String(patch.name).trim()
       if (name) item.name = name
@@ -510,14 +539,106 @@ export function useCalendarApp() {
       const hex = normalizeHexColor(patch.color)
       if (hex) item.color = hex
     }
-    persistDebounced('Update timer category')
+    if (patch.parentId !== undefined) {
+      const nextParent = patch.parentId || null
+      if (nextParent === id) return
+      if (nextParent && isAncestorCategory(store.timerCategories, id, nextParent)) return
+      if (nextParent && !getCategoryById(store.timerCategories, nextParent)) return
+      item.parentId = nextParent
+    }
+    if (patch.sortOrder != null && Number.isFinite(Number(patch.sortOrder))) {
+      item.sortOrder = Number(patch.sortOrder)
+    }
+    store.timerCategories = normalizeTimerCategories(store.timerCategories)
+
+    if (pathMayChange) {
+      for (const task of store.tasks) {
+        if (!affectedIds.includes(task.categoryId)) continue
+        const oldPath = oldPaths.get(task.categoryId)
+        const newPath = getCategoryPathLabel(store.timerCategories, task.categoryId)
+        if (!oldPath || !newPath || oldPath === newPath) continue
+        const title = String(task.title || '')
+        if (title === oldPath) task.title = newPath
+        else if (title.startsWith(oldPath)) task.title = `${newPath}${title.slice(oldPath.length)}`
+      }
+    }
+
+    persistDebounced(willRename ? 'Rename timer category' : 'Update timer category')
+  }
+
+  /** 往上一層：成為目前父層的同層；往下一層：成為前一個同層兄弟的子項 */
+  function shiftTimerCategoryLevel(id, direction) {
+    const item = getCategoryById(store.timerCategories, id)
+    if (!item) return false
+    if (direction === 'up') {
+      if (!item.parentId) return false
+      const parent = getCategoryById(store.timerCategories, item.parentId)
+      const newParentId = parent?.parentId || null
+      const siblings = getCategoryChildren(store.timerCategories, newParentId).filter((c) => c.id !== id)
+      const sortOrder = siblings.length ? Math.max(...siblings.map((s) => s.sortOrder)) + 1 : 0
+      updateTimerCategory(id, { parentId: newParentId, sortOrder })
+      return true
+    }
+    if (direction === 'down') {
+      const siblings = getCategoryChildren(store.timerCategories, item.parentId || null)
+      const idx = siblings.findIndex((c) => c.id === id)
+      if (idx <= 0) return false
+      const prev = siblings[idx - 1]
+      if (!prev || isAncestorCategory(store.timerCategories, id, prev.id)) return false
+      const kids = getCategoryChildren(store.timerCategories, prev.id)
+      const sortOrder = kids.length ? Math.max(...kids.map((s) => s.sortOrder)) + 1 : 0
+      updateTimerCategory(id, { parentId: prev.id, sortOrder })
+      return true
+    }
+    return false
   }
 
   function removeTimerCategory(id) {
-    const idx = store.timerCategories.findIndex((c) => c.id === id)
-    if (idx < 0) return
-    store.timerCategories.splice(idx, 1)
+    const toRemove = new Set([id, ...getDescendantIds(store.timerCategories, id, false)])
+    store.timerCategories = store.timerCategories.filter((c) => !toRemove.has(c.id))
     persistDebounced('Remove timer category')
+  }
+
+  /** 拖曳：將 draggedId 移到 targetId 的前面／後面，或成為其子項；targetId 為 null 則提為根分類 */
+  function moveTimerCategory(draggedId, targetId, place = 'before') {
+    if (!draggedId) return
+    const dragged = getCategoryById(store.timerCategories, draggedId)
+    if (!dragged) return
+
+    if (place === 'root' || targetId == null) {
+      if (!dragged.parentId) return
+      dragged.parentId = null
+      const roots = getCategoryChildren(store.timerCategories, null).filter((c) => c.id !== draggedId)
+      dragged.sortOrder = roots.length ? Math.max(...roots.map((s) => s.sortOrder)) + 1 : 0
+      store.timerCategories = normalizeTimerCategories(store.timerCategories)
+      persistDebounced('Move category to root')
+      return
+    }
+
+    if (draggedId === targetId) return
+    const target = getCategoryById(store.timerCategories, targetId)
+    if (!target) return
+    if (isAncestorCategory(store.timerCategories, draggedId, targetId)) return
+
+    if (place === 'child') {
+      dragged.parentId = target.id
+      const siblings = getCategoryChildren(store.timerCategories, target.id).filter((c) => c.id !== draggedId)
+      dragged.sortOrder = siblings.length ? Math.max(...siblings.map((s) => s.sortOrder)) + 1 : 0
+    } else {
+      dragged.parentId = target.parentId || null
+      const siblings = getCategoryChildren(store.timerCategories, dragged.parentId).filter(
+        (c) => c.id !== draggedId
+      )
+      const targetIndex = siblings.findIndex((c) => c.id === targetId)
+      const insertAt = place === 'after' ? targetIndex + 1 : targetIndex
+      siblings.splice(Math.max(0, insertAt), 0, dragged)
+      siblings.forEach((c, i) => {
+        const item = store.timerCategories.find((x) => x.id === c.id)
+        if (item) item.sortOrder = i
+      })
+    }
+    store.timerCategories = normalizeTimerCategories(store.timerCategories)
+    persistDebounced('Reorder timer categories')
   }
 
   return {
@@ -572,6 +693,8 @@ export function useCalendarApp() {
     addTimerCategory,
     updateTimerCategory,
     removeTimerCategory,
+    moveTimerCategory,
+    shiftTimerCategoryLevel,
     persistNow,
     persistDebounced
   }

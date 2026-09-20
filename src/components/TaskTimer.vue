@@ -1,7 +1,13 @@
 <script setup>
 import { computed, inject, nextTick, ref, watch } from 'vue'
 import { notificationPermission, notificationSupported } from '../lib/notifications'
-import { composeTaskTitle, scheduleStyleFromColor } from '../lib/utils'
+import {
+  composeTaskTitleFromCategory,
+  getCategoryChildren,
+  resolveCategoryColor
+} from '../lib/utils'
+import CategoryTreeManager from './CategoryTreeManager.vue'
+import CategoryTreeSelect from './CategoryTreeSelect.vue'
 import CollapsibleSection from './CollapsibleSection.vue'
 import SectionIcon from './SectionIcon.vue'
 
@@ -11,20 +17,16 @@ const timer = inject('taskTimer')
 const categories = computed(() => app.store.timerCategories || [])
 
 const categorySummary = computed(() => {
-  const list = categories.value
-  if (!list.length) return '尚無分類 · 點開新增'
-  if (list.length <= 3) return list.map((c) => c.name).join('、')
-  return `${list.length} 個分類 · ${list
+  const roots = getCategoryChildren(categories.value, null)
+  if (!roots.length) return '尚無分類 · 點開新增'
+  if (roots.length <= 3) return roots.map((c) => c.name).join('、')
+  return `${roots.length} 個根分類 · ${roots
     .slice(0, 2)
     .map((c) => c.name)
     .join('、')}…`
 })
 
-const showCategoryForm = ref(false)
-const newCatName = ref('')
-const newCatColor = ref('#F4A4B4')
-
-const selectedCatId = ref(null)
+const selectedCatId = ref('')
 const customTitle = ref('')
 const customTitleInput = ref(null)
 const endDialogError = ref('')
@@ -34,7 +36,7 @@ watch(
   () => timer.showEndDialog.value,
   (open) => {
     if (!open) {
-      selectedCatId.value = null
+      selectedCatId.value = ''
       customTitle.value = ''
       endDialogError.value = ''
       return
@@ -44,14 +46,7 @@ watch(
 )
 
 function resolveEndTitle() {
-  const cat = categories.value.find((c) => c.id === selectedCatId.value)
-  return composeTaskTitle(cat?.name, customTitle.value)
-}
-
-function catChipStyle(cat) {
-  const base = scheduleStyleFromColor(cat.color) || {}
-  const selected = selectedCatId.value === cat.id
-  return selected ? { ...base, boxShadow: '0 0 0 2px color-mix(in srgb, #BBAEE3 55%, white)' } : base
+  return composeTaskTitleFromCategory(categories.value, selectedCatId.value || null, customTitle.value)
 }
 
 async function saveSchedule(payload) {
@@ -68,7 +63,7 @@ async function saveSchedule(payload) {
     timer.finalizeAfterSave()
     app.goToScheduleDate(range.startAt)
     customTitle.value = ''
-    selectedCatId.value = null
+    selectedCatId.value = ''
     endDialogError.value = ''
   } catch (err) {
     app.syncError.value = err?.message || '儲存失敗，請稍後再試'
@@ -83,32 +78,14 @@ function trySaveEnd() {
     endDialogError.value = '請輸入或選擇內容'
     return
   }
-  const cat = categories.value.find((c) => c.id === selectedCatId.value)
+  const color = selectedCatId.value
+    ? resolveCategoryColor(categories.value, selectedCatId.value)
+    : undefined
   saveSchedule({
     title,
-    categoryId: cat?.id,
-    color: cat?.color
+    categoryId: selectedCatId.value || undefined,
+    color
   })
-}
-
-function onCategoryClick(cat) {
-  selectedCatId.value = selectedCatId.value === cat.id ? null : cat.id
-  endDialogError.value = ''
-}
-
-function addCategory() {
-  const name = newCatName.value.trim()
-  if (!name) return
-  const cat = app.addTimerCategory({ name, color: newCatColor.value })
-  if (cat) {
-    newCatName.value = ''
-    showCategoryForm.value = false
-  }
-}
-
-function removeCategory(id) {
-  if (!confirm('確定刪除此分類？已記錄的日程會保留原色。')) return
-  app.removeTimerCategory(id)
 }
 </script>
 
@@ -124,74 +101,12 @@ function removeCategory(id) {
     <div class="space-y-3 px-4 py-4">
       <template v-if="!timer.isRunning.value">
         <p class="text-sm text-mute">
-          開始後可縮小 App；結束時點分類即可記錄，無須每次打字。
+          開始後可縮小 App；結束時可選分類（含細項）並補充說明。
         </p>
 
         <CollapsibleSection id="timer-categories" title="計時分類" icon="list" :default-open="false">
           <template #summary>{{ categorySummary }}</template>
-
-          <div class="mb-3 flex justify-end">
-            <button
-              type="button"
-              class="text-xs font-medium text-brand-deep hover:underline"
-              @click="showCategoryForm = !showCategoryForm"
-            >
-              {{ showCategoryForm ? '取消新增' : '＋ 新增分類' }}
-            </button>
-          </div>
-
-          <div v-if="showCategoryForm" class="mb-3 flex flex-wrap items-end gap-2">
-            <label class="min-w-0 flex-1">
-              <span class="mb-1 block text-[11px] text-mute">名稱</span>
-              <input
-                v-model="newCatName"
-                type="text"
-                class="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand"
-                placeholder="例如：工作"
-                @keydown.enter.prevent="addCategory"
-              />
-            </label>
-            <label class="shrink-0">
-              <span class="mb-1 block text-[11px] text-mute">顏色</span>
-              <input
-                v-model="newCatColor"
-                type="color"
-                class="h-10 w-12 cursor-pointer rounded-lg border border-line bg-white p-1"
-              />
-            </label>
-            <button
-              type="button"
-              class="shrink-0 rounded-xl bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-deep disabled:opacity-50"
-              :disabled="!newCatName.trim()"
-              @click="addCategory"
-            >
-              加入
-            </button>
-          </div>
-
-          <ul v-if="categories.length" class="space-y-1.5">
-            <li
-              v-for="cat in categories"
-              :key="cat.id"
-              class="flex items-center gap-2 rounded-xl border border-line bg-white px-2 py-1.5"
-            >
-              <input
-                type="color"
-                :value="cat.color"
-                class="h-8 w-8 shrink-0 cursor-pointer rounded-lg border border-line p-0.5"
-                @input="app.updateTimerCategory(cat.id, { color: $event.target.value })"
-              />
-              <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">{{ cat.name }}</span>
-              <button
-                type="button"
-                class="shrink-0 rounded-lg px-2 py-1 text-xs text-mute hover:bg-soft hover:text-status-todo"
-                @click="removeCategory(cat.id)"
-              >
-                刪除
-              </button>
-            </li>
-          </ul>
-          <p v-else class="text-xs text-mute">尚無分類，請先新增以便結束計時時快速選取。</p>
+          <CategoryTreeManager />
         </CollapsibleSection>
 
         <label class="block">
@@ -289,20 +204,17 @@ function removeCategory(id) {
           <h3 class="text-base font-bold text-ink">結束計時 · 選擇分類</h3>
           <p class="mt-1 text-xs text-mute">已計時 {{ timer.elapsedLabel.value }}</p>
 
-          <div v-if="categories.length" class="mt-4 grid grid-cols-2 gap-2">
-            <button
-              v-for="cat in categories"
-              :key="cat.id"
-              type="button"
-              class="rounded-xl border px-3 py-3 text-left text-sm font-semibold text-ink transition hover:brightness-[0.98] disabled:opacity-50"
-              :class="selectedCatId === cat.id ? 'border-brand' : 'border-line'"
-              :style="catChipStyle(cat)"
-              :disabled="saving"
-              @click="onCategoryClick(cat)"
-            >
-              {{ cat.name }}
-            </button>
-          </div>
+          <label class="mt-4 block">
+            <span class="mb-1 block text-sm font-medium text-ink">分類（可選細項）</span>
+            <CategoryTreeSelect
+              v-if="categories.length"
+              v-model="selectedCatId"
+              :categories="categories"
+              placeholder="不選擇分類"
+              @update:model-value="endDialogError = ''"
+            />
+            <p v-else class="text-xs text-mute">尚無分類，可先到計時分類新增。</p>
+          </label>
 
           <label class="mt-4 block">
             <span class="mb-1 block text-sm font-medium text-ink">補充說明（可選）</span>

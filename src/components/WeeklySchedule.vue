@@ -8,8 +8,9 @@ import {
   formatTimeRange,
   isPlanTask,
   layoutDayOverlaps,
-  composeTaskTitle,
+  composeTaskTitleFromCategory,
   parseTaskTitleForEdit,
+  resolveCategoryColor,
   resolveTaskColor,
   scheduleStyleFromColor,
   SELECT_COLOR,
@@ -33,8 +34,10 @@ import {
   weekDates,
   weekdayLabel
 } from '../lib/utils'
+import CategoryTreeSelect from './CategoryTreeSelect.vue'
 import SectionIcon from './SectionIcon.vue'
 import StatusIcon from './StatusIcon.vue'
+import TimeAnalysisModal from './TimeAnalysisModal.vue'
 
 const app = inject('calendarApp')
 
@@ -48,6 +51,7 @@ const days = computed(() => weekDates(app.weekAnchor.value))
 const dialog = ref(null)
 const noteInput = ref(null)
 const formError = ref('')
+const showTimeAnalysis = ref(false)
 /** 計時分類（與任務計時共用） */
 const timerCategories = computed(() => app.store.timerCategories || [])
 /** 'all' | 'plan' | 'schedule' — 與 app.weekViewFilter 同步 */
@@ -297,8 +301,11 @@ function closeDialog() {
 
 function resolveFormTitle() {
   if (!dialog.value || dialog.value.mode !== 'form') return ''
-  const cat = timerCategories.value.find((c) => c.id === dialog.value.categoryId)
-  return composeTaskTitle(cat?.name, dialog.value.note)
+  return composeTaskTitleFromCategory(
+    timerCategories.value,
+    dialog.value.categoryId,
+    dialog.value.note
+  )
 }
 
 function saveEdit() {
@@ -311,7 +318,6 @@ function saveEdit() {
   }
   const range = buildRangeFromDatetimeLocal(startAtLocal, endAtLocal)
   if (!range) return
-  const cat = timerCategories.value.find((c) => c.id === categoryId)
   app.upsertTask({
     id: id || undefined,
     title,
@@ -319,8 +325,8 @@ function saveEdit() {
     kind,
     startAt: range.startAt,
     endAt: range.endAt,
-    categoryId: cat?.id,
-    color: cat?.color
+    categoryId: categoryId || undefined,
+    color: resolveCategoryColor(timerCategories.value, categoryId)
   })
   app.persistNow(`Upsert task: ${title}`)
   closeDialog()
@@ -443,6 +449,13 @@ onUnmounted(() => {
         每日計劃
       </h2>
       <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          class="rounded-lg border border-line bg-white px-3 py-1.5 text-sm font-medium text-ink hover:bg-soft"
+          @click="showTimeAnalysis = true"
+        >
+          時間分析
+        </button>
         <button
           type="button"
           class="rounded-lg border border-line bg-white px-3 py-1.5 text-sm font-medium text-ink hover:bg-soft"
@@ -726,7 +739,7 @@ onUnmounted(() => {
               <input
                 v-model="dialog.startAtLocal"
                 type="datetime-local"
-                step="60"
+                step="1"
                 class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
               />
             </label>
@@ -735,7 +748,7 @@ onUnmounted(() => {
               <input
                 v-model="dialog.endAtLocal"
                 type="datetime-local"
-                step="60"
+                step="1"
                 class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
               />
               <p class="mt-1 text-xs text-mute">可選不同日期以設定跨日行程。</p>
@@ -809,7 +822,7 @@ onUnmounted(() => {
           <input
             v-model="dialog.startAtLocal"
             type="datetime-local"
-            step="60"
+            step="1"
             class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
           />
         </label>
@@ -819,7 +832,7 @@ onUnmounted(() => {
           <input
             v-model="dialog.endAtLocal"
             type="datetime-local"
-            step="60"
+            step="1"
             class="w-full rounded-xl border border-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
           />
         </label>
@@ -848,17 +861,12 @@ onUnmounted(() => {
 
         <label class="mt-4 block">
           <span class="mb-1 block text-sm font-medium">計時分類（可選）</span>
-          <select
+          <CategoryTreeSelect
             v-if="timerCategories.length"
             v-model="dialog.categoryId"
-            class="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand"
-            @change="formError = ''"
-          >
-            <option value="">不選擇</option>
-            <option v-for="cat in timerCategories" :key="cat.id" :value="cat.id">
-              {{ cat.name }}
-            </option>
-          </select>
+            :categories="timerCategories"
+            @update:model-value="formError = ''"
+          />
           <p v-else class="text-xs text-mute">尚無分類，可於左側「任務計時」新增。</p>
         </label>
 
@@ -928,5 +936,7 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <TimeAnalysisModal :open="showTimeAnalysis" @close="showTimeAnalysis = false" />
   </section>
 </template>

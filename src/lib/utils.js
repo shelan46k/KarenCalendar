@@ -169,10 +169,10 @@ export function buildRangeFromClock(date, startTime, endTime) {
   }
 }
 
-/** `datetime-local` 輸入值（YYYY-MM-DDTHH:mm） */
+/** `datetime-local` 輸入值（YYYY-MM-DDTHH:mm:ss） */
 export function toDatetimeLocalValue(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return ''
-  return `${toDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return `${toDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 export function parseDatetimeLocalValue(value) {
@@ -189,15 +189,17 @@ export function defaultEndDatetimeLocal(startLocal, hours = 1) {
   return toDatetimeLocalValue(new Date(start.getTime() + hours * 3600000))
 }
 
+/**
+ * 由 datetime-local（已含日期）組成區間。
+ * 不再自動 +1 日（那是舊版「僅時間」跨夜邏輯）；若結束≤開始，改為至少延後 1 分鐘。
+ */
 export function buildRangeFromDatetimeLocal(startLocal, endLocal) {
   const start = parseDatetimeLocalValue(startLocal)
   let end = parseDatetimeLocalValue(endLocal)
   if (!start || !end) return null
   if (end <= start) {
-    end = new Date(end)
-    end.setDate(end.getDate() + 1)
+    end = new Date(start.getTime() + 60_000)
   }
-  if (end <= start) return null
   return {
     startAt: formatLocalDateTime(start, true),
     endAt: formatLocalDateTime(end, true)
@@ -468,9 +470,7 @@ export function normalizeStore(raw) {
     todos: Array.isArray(raw?.todos) ? raw.todos : [],
     keyPlans: Array.isArray(raw?.keyPlans) ? raw.keyPlans : [],
     reviews: raw?.reviews && typeof raw.reviews === 'object' ? raw.reviews : {},
-    timerCategories: (Array.isArray(raw?.timerCategories) ? raw.timerCategories : [])
-      .map(normalizeTimerCategory)
-      .filter(Boolean)
+    timerCategories: normalizeTimerCategories(raw?.timerCategories)
   }
 }
 
@@ -481,23 +481,115 @@ export function normalizeHexColor(value) {
   return null
 }
 
-export function normalizeTimerCategory(raw) {
+export function normalizeTimerCategory(raw, index = 0) {
   if (!raw || typeof raw !== 'object') return null
   const name = String(raw.name || '').trim()
   const color = normalizeHexColor(raw.color)
   if (!name || !color) return null
+  const parentId = raw.parentId ? String(raw.parentId) : null
+  const sortOrder = Number.isFinite(Number(raw.sortOrder)) ? Number(raw.sortOrder) : index
   return {
     id: raw.id || createId(),
     name,
-    color
+    color,
+    parentId,
+    sortOrder
   }
+}
+
+/** 正規化分類列表：補齊父子、去掉無效 parentId、依 sortOrder 排序 */
+export function normalizeTimerCategories(list) {
+  const raw = Array.isArray(list) ? list : []
+  const cats = raw
+    .map((item, i) => normalizeTimerCategory(item, i))
+    .filter(Boolean)
+  const ids = new Set(cats.map((c) => c.id))
+  for (const cat of cats) {
+    if (cat.parentId && !ids.has(cat.parentId)) cat.parentId = null
+    if (cat.parentId === cat.id) cat.parentId = null
+  }
+  return cats.sort((a, b) => {
+    if (a.parentId !== b.parentId) {
+      return String(a.parentId || '').localeCompare(String(b.parentId || ''))
+    }
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder
+    return a.name.localeCompare(b.name, 'zh-Hant')
+  })
+}
+
+export function getCategoryChildren(categories, parentId = null) {
+  const pid = parentId || null
+  return (categories || [])
+    .filter((c) => (c.parentId || null) === pid)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-Hant'))
+}
+
+export function getCategoryById(categories, id) {
+  if (!id) return null
+  return (categories || []).find((c) => c.id === id) || null
+}
+
+/** 從根到該節點的路徑（含自身） */
+export function getCategoryPath(categories, id) {
+  const path = []
+  let cur = getCategoryById(categories, id)
+  const guard = new Set()
+  while (cur && !guard.has(cur.id)) {
+    path.unshift(cur)
+    guard.add(cur.id)
+    cur = cur.parentId ? getCategoryById(categories, cur.parentId) : null
+  }
+  return path
+}
+
+export function getCategoryPathLabel(categories, id) {
+  return getCategoryPath(categories, id)
+    .map((c) => c.name)
+    .join(' / ')
+}
+
+export function getDescendantIds(categories, id, includeSelf = false) {
+  const result = []
+  if (includeSelf && id) result.push(id)
+  const walk = (parentId) => {
+    for (const child of getCategoryChildren(categories, parentId)) {
+      result.push(child.id)
+      walk(child.id)
+    }
+  }
+  if (id) walk(id)
+  return result
+}
+
+export function isAncestorCategory(categories, ancestorId, nodeId) {
+  if (!ancestorId || !nodeId || ancestorId === nodeId) return false
+  let cur = getCategoryById(categories, nodeId)
+  const guard = new Set()
+  while (cur?.parentId && !guard.has(cur.id)) {
+    if (cur.parentId === ancestorId) return true
+    guard.add(cur.id)
+    cur = getCategoryById(categories, cur.parentId)
+  }
+  return false
+}
+
+/** 自身色，若無則沿父層向上找 */
+export function resolveCategoryColor(categories, id) {
+  let cur = getCategoryById(categories, id)
+  const guard = new Set()
+  while (cur && !guard.has(cur.id)) {
+    const hex = normalizeHexColor(cur.color)
+    if (hex) return hex
+    guard.add(cur.id)
+    cur = cur.parentId ? getCategoryById(categories, cur.parentId) : null
+  }
+  return null
 }
 
 export function resolveTaskColor(task, categories = []) {
   const direct = normalizeHexColor(task?.color)
   if (direct) return direct
-  const cat = categories.find((c) => c.id === task?.categoryId)
-  return cat?.color || null
+  return resolveCategoryColor(categories, task?.categoryId)
 }
 
 /** 自訂補充文字外框（分類後方的備註） */
@@ -513,9 +605,9 @@ export function unwrapTaskNote(text) {
   return m ? m[1].trim() : t
 }
 
-/** 組合儲存標題：分類在前，備註以「」包住 */
-export function composeTaskTitle(categoryName, note) {
-  const cat = String(categoryName || '').trim()
+/** 組合儲存標題：分類路徑 + 備註「」 */
+export function composeTaskTitle(categoryPathOrName, note) {
+  const cat = String(categoryPathOrName || '').trim()
   const noteInner = unwrapTaskNote(note)
   const notePart = noteInner ? wrapTaskNote(noteInner) : ''
   if (cat && notePart) return `${cat}${notePart}`
@@ -524,20 +616,206 @@ export function composeTaskTitle(categoryName, note) {
   return ''
 }
 
+export function composeTaskTitleFromCategory(categories, categoryId, note) {
+  const path = categoryId ? getCategoryPathLabel(categories, categoryId) : ''
+  return composeTaskTitle(path, note)
+}
+
 /** 編輯表單：還原分類與備註欄位 */
 export function parseTaskTitleForEdit(task, categories = []) {
   const title = String(task?.title || '').trim()
-  const cat = categories.find((c) => c.id === task?.categoryId)
+  const cat = getCategoryById(categories, task?.categoryId)
   if (!cat) {
     return { categoryId: null, note: unwrapTaskNote(title) }
   }
-  if (title === cat.name) {
+  const path = getCategoryPathLabel(categories, cat.id)
+  if (title === path || title === cat.name) {
     return { categoryId: cat.id, note: '' }
+  }
+  if (path && title.startsWith(path)) {
+    return { categoryId: cat.id, note: unwrapTaskNote(title.slice(path.length)) }
   }
   if (title.startsWith(cat.name)) {
     return { categoryId: cat.id, note: unwrapTaskNote(title.slice(cat.name.length)) }
   }
   return { categoryId: cat.id, note: unwrapTaskNote(title) }
+}
+
+/** 扁平化選項（縮排標籤），供下拉／列表 */
+export function flattenCategoryOptions(categories, parentId = null, depth = 0) {
+  const rows = []
+  for (const cat of getCategoryChildren(categories, parentId)) {
+    rows.push({
+      id: cat.id,
+      name: cat.name,
+      color: resolveCategoryColor(categories, cat.id) || cat.color,
+      depth,
+      label: `${'　'.repeat(depth)}${depth ? '└ ' : ''}${cat.name}`,
+      pathLabel: getCategoryPathLabel(categories, cat.id)
+    })
+    rows.push(...flattenCategoryOptions(categories, cat.id, depth + 1))
+  }
+  return rows
+}
+
+export const UNCATEGORIZED_ID = '__uncategorized__'
+
+export function taskDurationMs(task) {
+  const start = taskStartMoment(task)
+  const end = taskEndMoment(task)
+  if (!start || !end || end <= start) return 0
+  return end.getTime() - start.getTime()
+}
+
+export function formatDurationMs(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return m > 0 ? `${h} 小時 ${m} 分` : `${h} 小時`
+  if (m > 0) return s > 0 && m < 5 ? `${m} 分 ${s} 秒` : `${m} 分`
+  return `${s} 秒`
+}
+
+/**
+ * 從標題推斷分類（相容舊資料：有標題路徑／名稱但沒存 categoryId）
+ * 例：`運動 / 上肢「訓練」`、`運動「備註」`
+ */
+export function matchCategoryIdFromTitle(title, categories = []) {
+  let raw = String(title || '').trim()
+  if (!raw) return null
+  raw = raw.replace(/「[^」]*」\s*$/, '').replace(/【[^】]*】\s*$/, '').trim()
+  if (!raw) return null
+
+  const options = flattenCategoryOptions(categories)
+  const byPath = [...options].sort((a, b) => b.pathLabel.length - a.pathLabel.length)
+  for (const opt of byPath) {
+    if (!opt.pathLabel) continue
+    if (raw === opt.pathLabel) return opt.id
+  }
+  // 舊格式：僅分類名稱（優先較長名稱，減少短名誤判）
+  const byName = [...options].sort((a, b) => b.name.length - a.name.length)
+  for (const opt of byName) {
+    if (raw === opt.name) return opt.id
+  }
+  return null
+}
+
+export function resolveTaskCategoryId(task, categories = []) {
+  const cid = task?.categoryId
+  if (cid && getCategoryById(categories, cid)) return cid
+  return matchCategoryIdFromTitle(task?.title, categories)
+}
+
+/**
+ * 依選取節點展開圓餅切片。
+ * - 選有子節點的分類 → 直接子項（含子孫彙總）+ 必要時「本層」
+ * - 選葉節點 → 該節點（含子孫，葉則僅自身）
+ * - 選未分類 → 未分類
+ * 切片 100% = 各切片合計
+ */
+export function buildTimeAnalysisSlices({
+  tasks = [],
+  categories = [],
+  fromKey,
+  toKey,
+  selectedIds = []
+}) {
+  const inRange = (tasks || []).filter((t) => taskOverlapsDateRange(t, fromKey, toKey))
+  const selected = [...new Set((selectedIds || []).filter(Boolean))]
+  if (!selected.length) {
+    return { slices: [], stats: { taskCount: inRange.length, timedCount: 0, totalMs: 0 } }
+  }
+
+  const durationByCategoryId = new Map()
+  let uncategorizedMs = 0
+  let timedCount = 0
+  for (const task of inRange) {
+    const ms = taskDurationMs(task)
+    if (ms <= 0) continue
+    timedCount += 1
+    const cid = resolveTaskCategoryId(task, categories)
+    if (!cid) {
+      uncategorizedMs += ms
+      continue
+    }
+    durationByCategoryId.set(cid, (durationByCategoryId.get(cid) || 0) + ms)
+  }
+
+  const subtreeMs = (id) => {
+    let total = durationByCategoryId.get(id) || 0
+    for (const did of getDescendantIds(categories, id, false)) {
+      total += durationByCategoryId.get(did) || 0
+    }
+    return total
+  }
+
+  const selfOnlyMs = (id) => durationByCategoryId.get(id) || 0
+
+  const sliceMap = new Map()
+
+  const addSlice = (key, label, color, ms) => {
+    if (ms <= 0) return
+    const prev = sliceMap.get(key)
+    if (prev) {
+      prev.ms += ms
+      return
+    }
+    sliceMap.set(key, { id: key, label, color, ms })
+  }
+
+  for (const id of selected) {
+    if (id === UNCATEGORIZED_ID) {
+      addSlice(UNCATEGORIZED_ID, '未分類', '#94a3b8', uncategorizedMs)
+      continue
+    }
+    const cat = getCategoryById(categories, id)
+    if (!cat) continue
+    const children = getCategoryChildren(categories, id)
+    if (children.length) {
+      for (const child of children) {
+        addSlice(
+          child.id,
+          child.name,
+          resolveCategoryColor(categories, child.id) || child.color,
+          subtreeMs(child.id)
+        )
+      }
+      const selfMs = selfOnlyMs(id)
+      if (selfMs > 0) {
+        addSlice(
+          `${id}__self`,
+          `${cat.name}（本層）`,
+          resolveCategoryColor(categories, id) || cat.color,
+          selfMs
+        )
+      }
+    } else {
+      addSlice(
+        cat.id,
+        cat.name,
+        resolveCategoryColor(categories, cat.id) || cat.color,
+        subtreeMs(cat.id)
+      )
+    }
+  }
+
+  const slices = [...sliceMap.values()]
+  const total = slices.reduce((sum, s) => sum + s.ms, 0)
+  return {
+    slices: slices
+      .map((s) => ({
+        ...s,
+        percent: total > 0 ? (s.ms / total) * 100 : 0,
+        durationLabel: formatDurationMs(s.ms)
+      }))
+      .sort((a, b) => b.ms - a.ms),
+    stats: {
+      taskCount: inRange.length,
+      timedCount,
+      totalMs: total
+    }
+  }
 }
 
 /** 日程格子 inline 樣式（依分類色） */
