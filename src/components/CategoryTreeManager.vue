@@ -4,6 +4,7 @@ import {
   flattenCategoryOptions,
   getCategoryById,
   getCategoryChildren,
+  getCategoryPath,
   getCategoryPathLabel,
   resolveCategoryColor
 } from '../lib/utils'
@@ -11,7 +12,43 @@ import {
 const app = inject('calendarApp')
 
 const categories = computed(() => app.store.timerCategories || [])
-const flatRows = computed(() => flattenCategoryOptions(categories.value))
+/** 收合中的節點 id（子孫一併隱藏） */
+const collapsedIds = ref(new Set())
+
+const visibleRows = computed(() => {
+  const rows = flattenCategoryOptions(categories.value)
+  const collapsed = collapsedIds.value
+  return rows
+    .filter((row) => {
+      const path = getCategoryPath(categories.value, row.id)
+      for (let i = 0; i < path.length - 1; i++) {
+        if (collapsed.has(path[i].id)) return false
+      }
+      return true
+    })
+    .map((row) => ({
+      ...row,
+      childCount: getCategoryChildren(categories.value, row.id).length
+    }))
+})
+
+function isCollapsed(id) {
+  return collapsedIds.value.has(id)
+}
+
+function toggleCollapse(id) {
+  const next = new Set(collapsedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  collapsedIds.value = next
+}
+
+function expandNode(id) {
+  if (!collapsedIds.value.has(id)) return
+  const next = new Set(collapsedIds.value)
+  next.delete(id)
+  collapsedIds.value = next
+}
 
 const showRootForm = ref(false)
 const newRootName = ref('')
@@ -46,10 +83,24 @@ const canMoveDown = computed(() => {
   return idx > 0
 })
 
+function setChildNameInput(el) {
+  childNameInput.value = el || null
+}
+
+function focusNameInput(inputRef) {
+  nextTick(() => {
+    nextTick(() => {
+      const el = inputRef.value
+      const node = Array.isArray(el) ? el.find(Boolean) : el
+      node?.focus?.()
+    })
+  })
+}
+
 function toggleRootForm() {
   showRootForm.value = !showRootForm.value
   if (showRootForm.value) {
-    nextTick(() => rootNameInput.value?.focus())
+    focusNameInput(rootNameInput)
   }
 }
 
@@ -57,7 +108,8 @@ function startAddChild(cat) {
   addingChildFor.value = cat.id
   newChildName.value = ''
   newChildColor.value = resolveCategoryColor(categories.value, cat.id) || cat.color || '#F4A4B4'
-  nextTick(() => childNameInput.value?.focus())
+  expandNode(cat.id)
+  focusNameInput(childNameInput)
 }
 
 function cancelAddChild() {
@@ -221,9 +273,9 @@ function rowStyle(row) {
       </button>
     </div>
 
-    <ul v-if="flatRows.length" class="space-y-1">
+    <ul v-if="visibleRows.length" class="space-y-1">
       <li
-        v-for="row in flatRows"
+        v-for="row in visibleRows"
         :key="row.id"
         class="rounded-xl border transition"
         :class="rowClass(row)"
@@ -232,6 +284,31 @@ function rowStyle(row) {
         @drop="onDrop($event, row.id)"
       >
         <div class="flex items-center gap-1 px-2 py-1.5">
+          <button
+            v-if="row.childCount > 0"
+            type="button"
+            class="inline-flex h-5 w-4 shrink-0 items-center justify-center rounded text-ink/75 hover:bg-white/70 hover:text-ink"
+            :title="isCollapsed(row.id) ? '展開子分類' : '收合子分類'"
+            @click="toggleCollapse(row.id)"
+          >
+            <svg
+              class="h-3 w-3 origin-center scale-[1.55]"
+              viewBox="0 0 12 12"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                v-if="isCollapsed(row.id)"
+                d="M4.2 2.2v7.6L9.5 6 4.2 2.2z"
+              />
+              <path v-else d="M2.2 4.2h7.6L6 9.5 2.2 4.2z" />
+            </svg>
+          </button>
+          <span
+            v-else
+            class="inline-flex h-5 w-4 shrink-0"
+            aria-hidden="true"
+          />
           <button
             type="button"
             class="cursor-grab px-1 text-ink/50 active:cursor-grabbing"
@@ -242,9 +319,17 @@ function rowStyle(row) {
           >
             ⋮⋮
           </button>
-          <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink" :title="row.pathLabel">
+          <button
+            type="button"
+            class="min-w-0 flex-1 truncate text-left text-sm font-medium text-ink"
+            :title="row.pathLabel"
+            @click="row.childCount > 0 ? toggleCollapse(row.id) : undefined"
+          >
             {{ row.name }}
-          </span>
+            <span v-if="row.childCount > 0 && isCollapsed(row.id)" class="ml-1 text-[11px] font-normal text-mute">
+              （{{ row.childCount }}）
+            </span>
+          </button>
           <div class="flex shrink-0 items-center gap-0.5">
             <button
               type="button"
@@ -280,7 +365,7 @@ function rowStyle(row) {
           <label class="min-w-0 flex-1">
             <span class="mb-1 block text-[11px] text-mute">子分類名稱</span>
             <input
-              ref="childNameInput"
+              :ref="setChildNameInput"
               v-model="newChildName"
               type="text"
               class="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand"
@@ -316,8 +401,8 @@ function rowStyle(row) {
       </li>
     </ul>
     <p v-else class="text-xs text-mute">尚無分類，請先新增根分類。</p>
-    <p v-if="flatRows.length" class="mt-2 text-[11px] text-mute">
-      拖曳 ⋮⋮ 可調同層順序或變成子分類；名稱／顏色／階層請按 ✎ 編輯。
+    <p v-if="visibleRows.length" class="mt-2 text-[11px] text-mute">
+      點 ▾／名稱可收合子分類；拖曳 ⋮⋮ 可調同層順序或變成子分類；名稱／顏色／階層請按 ✎ 編輯。
     </p>
 
     <Teleport to="body">
